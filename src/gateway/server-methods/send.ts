@@ -12,6 +12,7 @@ import {
 import { normalizeReplyPayloadsForDelivery } from "../../infra/outbound/payloads.js";
 import { resolveOutboundTarget } from "../../infra/outbound/targets.js";
 import { normalizePollInput } from "../../polls.js";
+import { executePluginCommand, matchPluginCommand } from "../../plugins/commands.js";
 import {
   ErrorCodes,
   errorShape,
@@ -225,6 +226,42 @@ export const sendHandlers: GatewayRequestHandlers = {
         if (!result) {
           throw new Error("No delivery result");
         }
+
+        // Process outgoing /commands as if the bot received them.
+        // This lets `openclaw message send --channel telegram --message "/inbox"` trigger
+        // plugin command handlers and send the result back to the same chat.
+        if (message.startsWith("/")) {
+          const match = matchPluginCommand(message);
+          if (match) {
+            try {
+              const cmdResult = await executePluginCommand({
+                command: match.command,
+                args: match.args,
+                senderId: "cli",
+                channel,
+                isAuthorizedSender: true,
+                commandBody: message,
+                config: cfg,
+                from: `${channel}:${resolved.to}`,
+                to: `${channel}:${resolved.to}`,
+                accountId,
+              });
+              if (cmdResult.text) {
+                await deliverOutboundPayloads({
+                  cfg,
+                  channel: outboundChannel,
+                  to: resolved.to,
+                  accountId,
+                  payloads: [{ text: cmdResult.text }],
+                  skipQueue: true,
+                });
+              }
+            } catch {
+              // Command execution errors are non-fatal — the original message was already sent.
+            }
+          }
+        }
+
         const payload: Record<string, unknown> = {
           runId: idem,
           messageId: result.messageId,

@@ -154,7 +154,12 @@ export async function sendMessage(params: MessageSendParams): Promise<MessageSen
   if (!plugin) {
     throw new Error(`Unknown channel: ${channel}`);
   }
-  const deliveryMode = plugin.outbound?.deliveryMode ?? "direct";
+  const rawDeliveryMode = plugin.outbound?.deliveryMode ?? "direct";
+  // Route /commands through the gateway so plugin command handlers can execute them.
+  const deliveryMode =
+    rawDeliveryMode !== "gateway" && params.content.trimStart().startsWith("/")
+      ? "gateway"
+      : rawDeliveryMode;
   const normalizedPayloads = normalizeReplyPayloadsForDelivery([
     {
       text: params.content,

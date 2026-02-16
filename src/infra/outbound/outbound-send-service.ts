@@ -57,7 +57,10 @@ export async function executeSendAction(params: {
   sendResult?: MessageSendResult;
 }> {
   throwIfAborted(params.ctx.abortSignal);
-  if (!params.ctx.dryRun) {
+  // Skip channel action handler for /commands so they route through the gateway,
+  // where plugin command handlers can process them.
+  const isSlashCommand = params.message.trimStart().startsWith("/");
+  if (!params.ctx.dryRun && !isSlashCommand) {
     const handled = await dispatchChannelMessageAction({
       channel: params.ctx.channel,
       action: "send",
