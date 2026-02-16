@@ -5,6 +5,8 @@
     "additionalProperties": true,
     "properties": {
       "enabled": { "type": "boolean" },
+      "authMode": { "type": "string", "enum": ["browser", "device-code"], "default": "browser" },
+      "browserProfile": { "type": "string", "default": "openclaw" },
       "telegramChatId": { "type": "string" },
       "telegramBotToken": { "type": "string" },
       "telegramAccountId": { "type": "string" },

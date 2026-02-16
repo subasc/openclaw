@@ -11,7 +11,7 @@ import {
 import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
-import type { TokenData } from "./types.js";
+import type { TokenData, IMsAuthProvider } from "./types.js";
 
 const SCOPES = [
   "Mail.Read",
@@ -35,7 +35,7 @@ export type MsAuthOptions = {
  * Microsoft auth provider using device code flow.
  * Manages token acquisition, persistence, and refresh.
  */
-export class MsAuth {
+export class MsAuth implements IMsAuthProvider {
   private pca: PublicClientApplication;
   private tokenFile: string;
   private tokenData: TokenData | null = null;
@@ -122,7 +122,7 @@ export class MsAuth {
   }
 
   /** Start the auto-refresh loop (every 45 minutes) */
-  startAutoRefresh(onError?: (error: string) => void): void {
+  startAutoRefresh(onError?: (error: string) => void | Promise<void>): void {
     this.stopAutoRefresh();
     this.refreshTimer = setInterval(
       async () => {

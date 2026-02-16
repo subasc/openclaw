@@ -2,10 +2,9 @@
 // Email monitor: polls Microsoft Graph for new emails, forwards to Telegram
 // ============================================================================
 
-import type { MsAuth } from "./ms-auth.js";
 import type { ReplyStore } from "./reply-store.js";
 import type { UnifiedInboxConfig } from "./config.js";
-import type { MonitorStatus, EmailMessage } from "./types.js";
+import type { MonitorStatus, EmailMessage, IMsAuthProvider } from "./types.js";
 import { fetchMailDelta, markAsRead } from "./ms-graph-client.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 import { formatEmailNotification } from "./formatters.js";
@@ -29,7 +28,7 @@ export class EmailMonitor {
 
   constructor(
     private cfg: UnifiedInboxConfig,
-    private auth: MsAuth,
+    private auth: IMsAuthProvider,
     private replyStore: ReplyStore,
     private log: Logger,
   ) {}

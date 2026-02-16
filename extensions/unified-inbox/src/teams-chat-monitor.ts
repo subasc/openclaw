@@ -2,10 +2,9 @@
 // Teams chat monitor: polls Microsoft Graph for new chat messages
 // ============================================================================
 
-import type { MsAuth } from "./ms-auth.js";
 import type { ReplyStore } from "./reply-store.js";
 import type { UnifiedInboxConfig } from "./config.js";
-import type { MonitorStatus, TeamsChat, TeamsChatMessage } from "./types.js";
+import type { MonitorStatus, TeamsChat, TeamsChatMessage, IMsAuthProvider } from "./types.js";
 import { listChats, listChatMessages } from "./ms-graph-client.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 import { formatTeamsChatNotification } from "./formatters.js";
@@ -29,7 +28,7 @@ export class TeamsChatMonitor {
 
   constructor(
     private cfg: UnifiedInboxConfig,
-    private auth: MsAuth,
+    private auth: IMsAuthProvider,
     private replyStore: ReplyStore,
     private log: Logger,
   ) {}

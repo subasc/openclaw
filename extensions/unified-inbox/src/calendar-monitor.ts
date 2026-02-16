@@ -2,9 +2,8 @@
 // Calendar monitor: polls Microsoft Graph for upcoming events, sends reminders
 // ============================================================================
 
-import type { MsAuth } from "./ms-auth.js";
 import type { UnifiedInboxConfig } from "./config.js";
-import type { MonitorStatus, CalendarEvent } from "./types.js";
+import type { MonitorStatus, CalendarEvent, IMsAuthProvider } from "./types.js";
 import { fetchCalendarView } from "./ms-graph-client.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 import {
@@ -30,7 +29,7 @@ export class CalendarMonitor {
 
   constructor(
     private cfg: UnifiedInboxConfig,
-    private auth: MsAuth,
+    private auth: IMsAuthProvider,
     private log: Logger,
   ) {}
 

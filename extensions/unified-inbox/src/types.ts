@@ -103,6 +103,15 @@ export type ReplyMapping = {
   createdAt: number;
 };
 
+/** Common auth provider interface for both device-code and browser-based auth */
+export interface IMsAuthProvider {
+  isAuthenticated(): boolean;
+  getAccessToken(): Promise<string>;
+  loadPersistedTokens(): Promise<boolean>;
+  startAutoRefresh(onError: (error: string) => Promise<void>): void;
+  stopAutoRefresh(): void;
+}
+
 /** Token data persisted to disk */
 export type TokenData = {
   accessToken: string;

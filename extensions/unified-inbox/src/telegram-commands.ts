@@ -4,7 +4,9 @@
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import type { UnifiedInboxConfig } from "./config.js";
+import type { IMsAuthProvider } from "./types.js";
 import type { MsAuth } from "./ms-auth.js";
+import type { MsAuthBrowser } from "./ms-auth-browser.js";
 import type { EmailMonitor } from "./email-monitor.js";
 import type { CalendarMonitor } from "./calendar-monitor.js";
 import type { TeamsChatMonitor } from "./teams-chat-monitor.js";
@@ -15,18 +17,21 @@ import {
 } from "./formatters.js";
 
 // Shared state — set by service.ts after initialization
-let sharedAuth: MsAuth | null = null;
+let sharedAuth: IMsAuthProvider | null = null;
+let sharedAuthMode: "browser" | "device-code" = "browser";
 let sharedEmailMonitor: EmailMonitor | null = null;
 let sharedCalendarMonitor: CalendarMonitor | null = null;
 let sharedTeamsChatMonitor: TeamsChatMonitor | null = null;
 
 export function setCommandDependencies(deps: {
-  auth: MsAuth;
+  auth: IMsAuthProvider;
+  authMode?: "browser" | "device-code";
   emailMonitor?: EmailMonitor;
   calendarMonitor?: CalendarMonitor;
   teamsChatMonitor?: TeamsChatMonitor;
 }): void {
   sharedAuth = deps.auth;
+  sharedAuthMode = deps.authMode ?? "browser";
   sharedEmailMonitor = deps.emailMonitor ?? null;
   sharedCalendarMonitor = deps.calendarMonitor ?? null;
   sharedTeamsChatMonitor = deps.teamsChatMonitor ?? null;
@@ -192,36 +197,20 @@ export function registerInboxCommands(
     },
   });
 
-  // /inbox_login — re-authenticate with Microsoft
+  // /inbox_login — authenticate with Microsoft
   api.registerCommand({
     name: "inbox_login",
-    description: "Authenticate with Microsoft 365 (device code flow)",
+    description: "Authenticate with Microsoft 365",
     handler: async (_ctx) => {
       if (!sharedAuth) {
         return { text: "Unified inbox service not initialized." };
       }
 
-      try {
-        // This will trigger the device code callback which sends the code to Telegram
-        const success = await sharedAuth.authenticateWithDeviceCode(
-          async (message) => {
-            const { sendTelegramMessage } = await import("./telegram-sender.js");
-            await sendTelegramMessage({
-              botToken: cfg.telegramBotToken,
-              chatId: cfg.telegramChatId,
-              text: message,
-            });
-          },
-        );
-
-        return {
-          text: success
-            ? "Authentication successful! Monitors will start automatically."
-            : "Authentication failed. Try again with /inbox_login.",
-        };
-      } catch (err) {
-        return { text: `Auth error: ${err instanceof Error ? err.message : String(err)}` };
+      if (sharedAuthMode === "browser") {
+        return await handleBrowserLogin(cfg);
       }
+
+      return await handleDeviceCodeLogin(cfg);
     },
   });
 
@@ -249,6 +238,7 @@ export function registerInboxCommands(
       };
 
       const lines = [
+        `Auth mode: ${sharedAuthMode}`,
         `Authenticated: ${authenticated ? "yes" : "NO"}`,
         "",
         formatStatus("Email", sharedEmailMonitor?.status ?? null),
@@ -262,6 +252,98 @@ export function registerInboxCommands(
   });
 }
 
+// ---------------------------------------------------------------------------
+// Browser-based login flow
+// ---------------------------------------------------------------------------
+
+async function handleBrowserLogin(
+  cfg: UnifiedInboxConfig,
+): Promise<{ text: string }> {
+  const browserAuth = sharedAuth as MsAuthBrowser;
+
+  const { sendTelegramMessage } = await import("./telegram-sender.js");
+  await sendTelegramMessage({
+    botToken: cfg.telegramBotToken,
+    chatId: cfg.telegramChatId,
+    text: "Opening Outlook Web in browser... Sign in with your Microsoft account and MFA.",
+  });
+
+  try {
+    // Open Outlook login page
+    await browserAuth.openLoginPage();
+  } catch (err) {
+    return {
+      text: `Failed to open browser: ${err instanceof Error ? err.message : String(err)}\nMake sure the OpenClaw gateway is running.`,
+    };
+  }
+
+  // Poll for token extraction (up to 5 minutes, checking every 10 seconds)
+  const maxAttempts = 30;
+  const pollIntervalMs = 10_000;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await sleep(pollIntervalMs);
+
+    const extracted = await browserAuth.extractTokensFromBrowser();
+    if (extracted) {
+      return {
+        text: "Authentication successful! Browser tokens extracted. Monitors will start automatically.",
+      };
+    }
+
+    // Send progress update every 30 seconds
+    if (attempt % 3 === 0) {
+      const remaining = Math.ceil(
+        ((maxAttempts - attempt) * pollIntervalMs) / 60_000,
+      );
+      await sendTelegramMessage({
+        botToken: cfg.telegramBotToken,
+        chatId: cfg.telegramChatId,
+        text: `Still waiting for sign-in... (${remaining} min remaining)`,
+      });
+    }
+  }
+
+  return {
+    text: "Login timed out after 5 minutes. Try /inbox_login again after signing in to Outlook Web in the browser.",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Device-code login flow (original)
+// ---------------------------------------------------------------------------
+
+async function handleDeviceCodeLogin(
+  cfg: UnifiedInboxConfig,
+): Promise<{ text: string }> {
+  const deviceCodeAuth = sharedAuth as MsAuth;
+
+  try {
+    const success = await deviceCodeAuth.authenticateWithDeviceCode(
+      async (message) => {
+        const { sendTelegramMessage } = await import("./telegram-sender.js");
+        await sendTelegramMessage({
+          botToken: cfg.telegramBotToken,
+          chatId: cfg.telegramChatId,
+          text: message,
+        });
+      },
+    );
+
+    return {
+      text: success
+        ? "Authentication successful! Monitors will start automatically."
+        : "Authentication failed. Try again with /inbox_login.",
+    };
+  } catch (err) {
+    return { text: `Auth error: ${err instanceof Error ? err.message : String(err)}` };
+  }
+}
+
 function esc(text: string): string {
   return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, "\\$1");
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }

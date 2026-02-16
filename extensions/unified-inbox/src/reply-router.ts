@@ -4,19 +4,19 @@
 
 import type { ReplyStore } from "./reply-store.js";
 import type { UnifiedInboxConfig } from "./config.js";
-import type { MsAuth } from "./ms-auth.js";
+import type { IMsAuthProvider } from "./types.js";
 import { replyToEmail, sendChatMessage } from "./ms-graph-client.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 
 // Shared state set by service.ts after initialization
-let sharedAuth: MsAuth | null = null;
+let sharedAuth: IMsAuthProvider | null = null;
 let sharedReplyStore: ReplyStore | null = null;
 let sharedWhatsAppSend:
   | ((jid: string, text: string) => Promise<void>)
   | null = null;
 
 export function setReplyRouterDependencies(deps: {
-  auth: MsAuth;
+  auth: IMsAuthProvider;
   replyStore: ReplyStore;
   whatsAppSend?: (jid: string, text: string) => Promise<void>;
 }): void {

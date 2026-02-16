@@ -8,7 +8,9 @@ import type {
   OpenClawPluginServiceContext,
 } from "openclaw/plugin-sdk";
 import type { UnifiedInboxConfig } from "./config.js";
+import type { IMsAuthProvider } from "./types.js";
 import { MsAuth } from "./ms-auth.js";
+import { MsAuthBrowser } from "./ms-auth-browser.js";
 import { ReplyStore } from "./reply-store.js";
 import { EmailMonitor } from "./email-monitor.js";
 import { CalendarMonitor } from "./calendar-monitor.js";
@@ -23,8 +25,9 @@ type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error:
 export function createUnifiedInboxService(
   cfg: UnifiedInboxConfig,
   log: Logger,
+  gatewayPort?: number,
 ): OpenClawPluginService {
-  let auth: MsAuth | null = null;
+  let auth: IMsAuthProvider | null = null;
   let replyStore: ReplyStore | null = null;
   let emailMonitor: EmailMonitor | null = null;
   let calendarMonitor: CalendarMonitor | null = null;
@@ -36,12 +39,28 @@ export function createUnifiedInboxService(
     async start(_ctx: OpenClawPluginServiceContext): Promise<void> {
       log.info("unified-inbox: service starting...");
 
-      // 1. Initialize token store
-      auth = new MsAuth({
-        clientId: cfg.microsoft.clientId,
-        tenantId: cfg.microsoft.tenantId,
-        tokenFile: cfg.microsoft.tokenFile,
-      });
+      // 1. Initialize auth provider based on config
+      if (cfg.authMode === "browser") {
+        const browserApiPort = (gatewayPort ?? 18789) + 2;
+        auth = new MsAuthBrowser(
+          {
+            browserApiPort,
+            browserProfile: cfg.browserProfile,
+            tokenFile: cfg.microsoft.tokenFile,
+          },
+          log,
+        );
+        log.info(
+          `unified-inbox: using browser auth (API port ${browserApiPort}, profile "${cfg.browserProfile}")`,
+        );
+      } else {
+        auth = new MsAuth({
+          clientId: cfg.microsoft.clientId,
+          tenantId: cfg.microsoft.tenantId,
+          tokenFile: cfg.microsoft.tokenFile,
+        });
+        log.info("unified-inbox: using device-code auth");
+      }
 
       // 2. Initialize reply store
       replyStore = new ReplyStore({
@@ -66,11 +85,11 @@ export function createUnifiedInboxService(
         await sendTelegramMessage({
           botToken: cfg.telegramBotToken,
           chatId: cfg.telegramChatId,
-          text: "[Unified Inbox] Started but not authenticated. Send /inbox_login to connect your Microsoft 365 account.",
+          text: `[Unified Inbox] Started but not authenticated (${cfg.authMode} mode). Send /inbox_login to connect your Microsoft 365 account.`,
         });
 
         // Still wire up commands so /inbox_login works
-        setCommandDependencies({ auth });
+        setCommandDependencies({ auth, authMode: cfg.authMode });
         return;
       }
 
@@ -103,6 +122,7 @@ export function createUnifiedInboxService(
       // 7. Wire up command dependencies (with monitors)
       setCommandDependencies({
         auth,
+        authMode: cfg.authMode,
         emailMonitor: emailMonitor ?? undefined,
         calendarMonitor: calendarMonitor ?? undefined,
         teamsChatMonitor: teamsChatMonitor ?? undefined,
@@ -122,7 +142,7 @@ export function createUnifiedInboxService(
       await sendTelegramMessage({
         botToken: cfg.telegramBotToken,
         chatId: cfg.telegramChatId,
-        text: `[Unified Inbox] Started successfully. Active monitors: ${monitors}`,
+        text: `[Unified Inbox] Started successfully (${cfg.authMode} mode). Active monitors: ${monitors}`,
       });
     },
 
