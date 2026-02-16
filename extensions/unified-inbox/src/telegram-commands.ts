@@ -42,7 +42,7 @@ export function registerInboxCommands(
     description: "Show recent unread emails",
     handler: async (_ctx) => {
       if (!sharedAuth?.isAuthenticated()) {
-        return { text: "Not authenticated. Use /inbox-login first." };
+        return { text: "Not authenticated. Use /inbox_login first." };
       }
 
       try {
@@ -76,7 +76,7 @@ export function registerInboxCommands(
     description: "Show today's upcoming events",
     handler: async (_ctx) => {
       if (!sharedAuth?.isAuthenticated()) {
-        return { text: "Not authenticated. Use /inbox-login first." };
+        return { text: "Not authenticated. Use /inbox_login first." };
       }
 
       try {
@@ -110,7 +110,7 @@ export function registerInboxCommands(
     description: "Show recent Teams chat activity",
     handler: async (_ctx) => {
       if (!sharedAuth?.isAuthenticated()) {
-        return { text: "Not authenticated. Use /inbox-login first." };
+        return { text: "Not authenticated. Use /inbox_login first." };
       }
 
       try {
@@ -156,7 +156,7 @@ export function registerInboxCommands(
     acceptsArgs: true,
     handler: async (ctx) => {
       if (!sharedAuth?.isAuthenticated()) {
-        return { text: "Not authenticated. Use /inbox-login first." };
+        return { text: "Not authenticated. Use /inbox_login first." };
       }
 
       const args = ctx.args?.trim();
@@ -192,9 +192,9 @@ export function registerInboxCommands(
     },
   });
 
-  // /inbox-login — re-authenticate with Microsoft
+  // /inbox_login — re-authenticate with Microsoft
   api.registerCommand({
-    name: "inbox-login",
+    name: "inbox_login",
     description: "Authenticate with Microsoft 365 (device code flow)",
     handler: async (_ctx) => {
       if (!sharedAuth) {
@@ -217,7 +217,7 @@ export function registerInboxCommands(
         return {
           text: success
             ? "Authentication successful! Monitors will start automatically."
-            : "Authentication failed. Try again with /inbox-login.",
+            : "Authentication failed. Try again with /inbox_login.",
         };
       } catch (err) {
         return { text: `Auth error: ${err instanceof Error ? err.message : String(err)}` };
@@ -225,9 +225,9 @@ export function registerInboxCommands(
     },
   });
 
-  // /inbox-status — show monitor statuses
+  // /inbox_status — show monitor statuses
   api.registerCommand({
-    name: "inbox-status",
+    name: "inbox_status",
     description: "Show Unified Inbox monitor statuses",
     handler: async (_ctx) => {
       const authenticated = sharedAuth?.isAuthenticated() ?? false;

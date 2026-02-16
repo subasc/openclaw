@@ -1,5 +1,4 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
-import { emptyPluginConfigSchema } from "openclaw/plugin-sdk";
 import { resolveUnifiedInboxConfig } from "./src/config.js";
 import { createUnifiedInboxService } from "./src/service.js";
 import { createReplyRouter } from "./src/reply-router.js";
@@ -11,7 +10,16 @@ const plugin = {
   name: "Unified Inbox",
   description:
     "Bridge Microsoft 365 email, calendar, Teams chat, and WhatsApp through Telegram",
-  configSchema: emptyPluginConfigSchema(),
+  configSchema: {
+    safeParse(value: unknown) {
+      return { success: true, data: value };
+    },
+    jsonSchema: {
+      type: "object",
+      additionalProperties: true,
+      properties: {},
+    },
+  },
 
   register(api: OpenClawPluginApi) {
     const cfg = resolveUnifiedInboxConfig(api.pluginConfig);

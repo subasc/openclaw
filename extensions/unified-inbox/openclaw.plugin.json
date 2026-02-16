@@ -2,7 +2,18 @@
   "id": "unified-inbox",
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
-    "properties": {}
+    "additionalProperties": true,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "telegramChatId": { "type": "string" },
+      "telegramBotToken": { "type": "string" },
+      "telegramAccountId": { "type": "string" },
+      "microsoft": { "type": "object" },
+      "email": { "type": "object" },
+      "calendar": { "type": "object" },
+      "teamsChat": { "type": "object" },
+      "whatsapp": { "type": "object" },
+      "replyTracking": { "type": "object" }
+    }
   }
 }

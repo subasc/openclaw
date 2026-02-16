@@ -61,15 +61,15 @@ export function createUnifiedInboxService(
 
       if (!hasTokens) {
         log.info(
-          "unified-inbox: no valid tokens found. Use /inbox-login to authenticate.",
+          "unified-inbox: no valid tokens found. Use /inbox_login to authenticate.",
         );
         await sendTelegramMessage({
           botToken: cfg.telegramBotToken,
           chatId: cfg.telegramChatId,
-          text: "[Unified Inbox] Started but not authenticated. Send /inbox-login to connect your Microsoft 365 account.",
+          text: "[Unified Inbox] Started but not authenticated. Send /inbox_login to connect your Microsoft 365 account.",
         });
 
-        // Still wire up commands so /inbox-login works
+        // Still wire up commands so /inbox_login works
         setCommandDependencies({ auth });
         return;
       }
@@ -80,7 +80,7 @@ export function createUnifiedInboxService(
         await sendTelegramMessage({
           botToken: cfg.telegramBotToken,
           chatId: cfg.telegramChatId,
-          text: `[Unified Inbox] Token refresh failed: ${error}\nUse /inbox-login to re-authenticate.`,
+          text: `[Unified Inbox] Token refresh failed: ${error}\nUse /inbox_login to re-authenticate.`,
         });
       });
 

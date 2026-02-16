@@ -100,7 +100,7 @@ export class MsAuth {
   /** Get a valid access token, refreshing if needed. */
   async getAccessToken(): Promise<string> {
     if (!this.tokenData) {
-      throw new Error("Not authenticated. Run /inbox-login first.");
+      throw new Error("Not authenticated. Run /inbox_login first.");
     }
 
     // Refresh if token expires within 5 minutes
@@ -108,7 +108,7 @@ export class MsAuth {
       const refreshed = await this.refreshAccessToken();
       if (!refreshed) {
         throw new Error(
-          "Token refresh failed. Run /inbox-login to re-authenticate.",
+          "Token refresh failed. Run /inbox_login to re-authenticate.",
         );
       }
     }
