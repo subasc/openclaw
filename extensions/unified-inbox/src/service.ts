@@ -25,7 +25,6 @@ type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error:
 export function createUnifiedInboxService(
   cfg: UnifiedInboxConfig,
   log: Logger,
-  gatewayPort?: number,
 ): OpenClawPluginService {
   let auth: IMsAuthProvider | null = null;
   let replyStore: ReplyStore | null = null;
@@ -41,17 +40,16 @@ export function createUnifiedInboxService(
 
       // 1. Initialize auth provider based on config
       if (cfg.authMode === "browser") {
-        const browserApiPort = (gatewayPort ?? 18789) + 2;
         auth = new MsAuthBrowser(
           {
-            browserApiPort,
             browserProfile: cfg.browserProfile,
+            cdpPort: cfg.browserCdpPort,
             tokenFile: cfg.microsoft.tokenFile,
           },
           log,
         );
         log.info(
-          `unified-inbox: using browser auth (API port ${browserApiPort}, profile "${cfg.browserProfile}")`,
+          `unified-inbox: using browser auth (profile "${cfg.browserProfile}")`,
         );
       } else {
         auth = new MsAuth({

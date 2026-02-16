@@ -7,6 +7,7 @@ export type UnifiedInboxConfig = {
   enabled: boolean;
   authMode: "browser" | "device-code";
   browserProfile: string;
+  browserCdpPort: number;
   telegramChatId: string;
   telegramBotToken: string;
   telegramAccountId: string;
@@ -50,7 +51,8 @@ const DEFAULT_CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c";
 const DEFAULTS: UnifiedInboxConfig = {
   enabled: false,
   authMode: "browser",
-  browserProfile: "openclaw",
+  browserProfile: "inbox",
+  browserCdpPort: 18801,
   telegramChatId: "",
   telegramBotToken: "",
   telegramAccountId: "default",
@@ -100,6 +102,7 @@ export function resolveUnifiedInboxConfig(
     enabled: Boolean(raw.enabled ?? DEFAULTS.enabled),
     authMode: (raw.authMode === "device-code" ? "device-code" : DEFAULTS.authMode),
     browserProfile: String(raw.browserProfile ?? DEFAULTS.browserProfile),
+    browserCdpPort: Number(raw.browserCdpPort ?? DEFAULTS.browserCdpPort),
     telegramChatId: String(raw.telegramChatId ?? process.env.UNIFIED_INBOX_TELEGRAM_CHAT_ID ?? DEFAULTS.telegramChatId),
     telegramBotToken: String(raw.telegramBotToken ?? process.env.TELEGRAM_BOT_TOKEN ?? DEFAULTS.telegramBotToken),
     telegramAccountId: String(raw.telegramAccountId ?? DEFAULTS.telegramAccountId),

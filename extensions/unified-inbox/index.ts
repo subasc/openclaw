@@ -36,8 +36,7 @@ const plugin = {
     }
 
     // Register the background service (manages all monitors + token refresh)
-    const gatewayPort = api.config.gateway?.port;
-    api.registerService(createUnifiedInboxService(cfg, api.logger, gatewayPort));
+    api.registerService(createUnifiedInboxService(cfg, api.logger));
 
     // Register reply router hook (intercepts Telegram replies, routes back to source)
     const replyRouter = createReplyRouter(cfg, api.logger);

@@ -265,47 +265,35 @@ async function handleBrowserLogin(
   await sendTelegramMessage({
     botToken: cfg.telegramBotToken,
     chatId: cfg.telegramChatId,
-    text: "Opening Outlook Web in browser... Sign in with your Microsoft account and MFA.",
+    text: 'Opening Microsoft login in browser... Click "Continue" when prompted.',
   });
 
-  try {
-    // Open Outlook login page
-    await browserAuth.openLoginPage();
-  } catch (err) {
+  // Start the OAuth auth code flow via CDP
+  const result = await browserAuth.startLoginFlow(5 * 60 * 1000);
+
+  if ("error" in result) {
     return {
-      text: `Failed to open browser: ${err instanceof Error ? err.message : String(err)}\nMake sure the OpenClaw gateway is running.`,
+      text: `Login failed: ${result.error}\nMake sure the browser profile is running.`,
     };
   }
 
-  // Poll for token extraction (up to 5 minutes, checking every 10 seconds)
-  const maxAttempts = 30;
-  const pollIntervalMs = 10_000;
+  // Exchange auth code for tokens
+  await sendTelegramMessage({
+    botToken: cfg.telegramBotToken,
+    chatId: cfg.telegramChatId,
+    text: "Sign-in confirmed. Exchanging for Graph API tokens...",
+  });
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    await sleep(pollIntervalMs);
-
-    const extracted = await browserAuth.extractTokensFromBrowser();
-    if (extracted) {
-      return {
-        text: "Authentication successful! Browser tokens extracted. Monitors will start automatically.",
-      };
-    }
-
-    // Send progress update every 30 seconds
-    if (attempt % 3 === 0) {
-      const remaining = Math.ceil(
-        ((maxAttempts - attempt) * pollIntervalMs) / 60_000,
-      );
-      await sendTelegramMessage({
-        botToken: cfg.telegramBotToken,
-        chatId: cfg.telegramChatId,
-        text: `Still waiting for sign-in... (${remaining} min remaining)`,
-      });
-    }
+  const success = await browserAuth.exchangeAuthCode(result.code);
+  if (!success) {
+    return { text: "Token exchange failed. Try /inbox_login again." };
   }
 
+  // Navigate browser back to Outlook
+  await browserAuth.navigateToOutlook();
+
   return {
-    text: "Login timed out after 5 minutes. Try /inbox_login again after signing in to Outlook Web in the browser.",
+    text: "Authentication successful! Graph API tokens acquired. Monitors will start automatically.",
   };
 }
 

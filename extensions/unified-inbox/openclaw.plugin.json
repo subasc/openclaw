@@ -6,7 +6,8 @@
     "properties": {
       "enabled": { "type": "boolean" },
       "authMode": { "type": "string", "enum": ["browser", "device-code"], "default": "browser" },
-      "browserProfile": { "type": "string", "default": "openclaw" },
+      "browserProfile": { "type": "string", "default": "inbox" },
+      "browserCdpPort": { "type": "number", "default": 18801 },
       "telegramChatId": { "type": "string" },
       "telegramBotToken": { "type": "string" },
       "telegramAccountId": { "type": "string" },
