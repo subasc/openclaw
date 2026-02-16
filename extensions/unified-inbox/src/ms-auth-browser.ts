@@ -16,7 +16,17 @@ const TOKEN_FILE = "~/.openclaw/unified-inbox-tokens.json";
 const CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c";
 const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
 const TOKEN_ENDPOINT = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token";
-const SCOPE = "https://graph.microsoft.com/.default offline_access openid profile";
+const SCOPE = [
+  "offline_access",
+  "openid",
+  "profile",
+  "email",
+  "https://graph.microsoft.com/Mail.ReadWrite",
+  "https://graph.microsoft.com/Mail.Send",
+  "https://graph.microsoft.com/Calendars.ReadWrite",
+  "https://graph.microsoft.com/Chat.Read",
+  "https://graph.microsoft.com/User.Read",
+].join(" ");
 
 // Token refresh 5 minutes before expiry
 const REFRESH_BUFFER_MS = 5 * 60 * 1000;

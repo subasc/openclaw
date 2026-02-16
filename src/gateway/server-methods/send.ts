@@ -233,32 +233,37 @@ export const sendHandlers: GatewayRequestHandlers = {
         if (message.startsWith("/")) {
           const match = matchPluginCommand(message);
           if (match) {
-            try {
-              const cmdResult = await executePluginCommand({
-                command: match.command,
-                args: match.args,
-                senderId: "cli",
-                channel,
-                isAuthorizedSender: true,
-                commandBody: message,
-                config: cfg,
-                from: `${channel}:${resolved.to}`,
-                to: `${channel}:${resolved.to}`,
-                accountId,
-              });
-              if (cmdResult.text) {
-                await deliverOutboundPayloads({
-                  cfg,
-                  channel: outboundChannel,
-                  to: resolved.to,
+            // Fire-and-forget: detach from the gateway request/response cycle
+            // so long-running handlers (e.g. /inbox_login with MFA) aren't
+            // killed by the 10-second gateway client timeout.
+            void (async () => {
+              try {
+                const cmdResult = await executePluginCommand({
+                  command: match.command,
+                  args: match.args,
+                  senderId: "cli",
+                  channel,
+                  isAuthorizedSender: true,
+                  commandBody: message,
+                  config: cfg,
+                  from: `${channel}:${resolved.to}`,
+                  to: `${channel}:${resolved.to}`,
                   accountId,
-                  payloads: [{ text: cmdResult.text }],
-                  skipQueue: true,
                 });
+                if (cmdResult.text) {
+                  await deliverOutboundPayloads({
+                    cfg,
+                    channel: outboundChannel,
+                    to: resolved.to,
+                    accountId,
+                    payloads: [{ text: cmdResult.text }],
+                    skipQueue: true,
+                  });
+                }
+              } catch {
+                // Command execution errors are non-fatal — the original message was already sent.
               }
-            } catch {
-              // Command execution errors are non-fatal — the original message was already sent.
-            }
+            })();
           }
         }
 
