@@ -74,9 +74,12 @@ export async function fetchMailDelta(
       $top: String(opts?.top ?? 10),
     });
     if (opts?.filterUnread) {
+      // The delta endpoint doesn't support $filter=isRead — use the regular messages endpoint.
       params.set("$filter", "isRead eq false");
+      url = `/me/mailFolders/${folder}/messages?${params}`;
+    } else {
+      url = `/me/mailFolders/${folder}/messages/delta?${params}`;
     }
-    url = `/me/mailFolders/${folder}/messages/delta?${params}`;
   }
 
   const allMessages: EmailMessage[] = [];
