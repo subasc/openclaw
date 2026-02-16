@@ -1,0 +1,8 @@
+{
+  "id": "unified-inbox",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

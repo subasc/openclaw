@@ -1,0 +1,130 @@
+// ============================================================================
+// Reply router: intercepts Telegram replies and routes them back to source
+// ============================================================================
+
+import type { ReplyStore } from "./reply-store.js";
+import type { UnifiedInboxConfig } from "./config.js";
+import type { MsAuth } from "./ms-auth.js";
+import { replyToEmail, sendChatMessage } from "./ms-graph-client.js";
+import { sendTelegramMessage } from "./telegram-sender.js";
+
+// Shared state set by service.ts after initialization
+let sharedAuth: MsAuth | null = null;
+let sharedReplyStore: ReplyStore | null = null;
+let sharedWhatsAppSend:
+  | ((jid: string, text: string) => Promise<void>)
+  | null = null;
+
+export function setReplyRouterDependencies(deps: {
+  auth: MsAuth;
+  replyStore: ReplyStore;
+  whatsAppSend?: (jid: string, text: string) => Promise<void>;
+}): void {
+  sharedAuth = deps.auth;
+  sharedReplyStore = deps.replyStore;
+  if (deps.whatsAppSend) sharedWhatsAppSend = deps.whatsAppSend;
+}
+
+type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+type HookEvent = { from: string; content: string; timestamp?: number; metadata?: Record<string, unknown> };
+type HookContext = { channelId: string; accountId?: string; conversationId?: string };
+
+export function createReplyRouter(
+  cfg: UnifiedInboxConfig,
+  log: Logger,
+) {
+  return {
+    async handleMessageReceived(
+      event: HookEvent,
+      ctx: HookContext,
+    ): Promise<void> {
+      // Only process Telegram messages
+      if (ctx.channelId !== "telegram") return;
+
+      // Check if this is a reply to a forwarded message
+      const replyToId = (event.metadata?.replyToMessageId as number) ?? null;
+      if (!replyToId || !sharedReplyStore) return;
+
+      const mapping = sharedReplyStore.get(replyToId);
+      if (!mapping) return;
+
+      const replyText = event.content?.trim();
+      if (!replyText) return;
+
+      try {
+        switch (mapping.sourceContext.type) {
+          case "email":
+            await routeToEmail(replyText, mapping.sourceContext.messageId, log);
+            break;
+
+          case "teams-chat":
+            await routeToTeams(
+              replyText,
+              mapping.sourceContext.chatId,
+              log,
+            );
+            break;
+
+          case "whatsapp":
+            await routeToWhatsApp(
+              replyText,
+              mapping.sourceContext.jid,
+              log,
+            );
+            break;
+        }
+
+        // Confirm delivery with a small reaction-like message
+        await sendTelegramMessage({
+          botToken: cfg.telegramBotToken,
+          chatId: cfg.telegramChatId,
+          text: `Sent to ${mapping.source}`,
+        });
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        log.error(
+          `unified-inbox: reply routing failed (${mapping.source}): ${errorMsg}`,
+        );
+        await sendTelegramMessage({
+          botToken: cfg.telegramBotToken,
+          chatId: cfg.telegramChatId,
+          text: `Failed to send reply to ${mapping.source}: ${errorMsg}`,
+        });
+      }
+    },
+  };
+}
+
+async function routeToEmail(
+  text: string,
+  messageId: string,
+  log: Logger,
+): Promise<void> {
+  if (!sharedAuth) throw new Error("Not authenticated");
+  const token = await sharedAuth.getAccessToken();
+  await replyToEmail(token, messageId, text);
+  log.info(`unified-inbox: replied to email ${messageId}`);
+}
+
+async function routeToTeams(
+  text: string,
+  chatId: string,
+  log: Logger,
+): Promise<void> {
+  if (!sharedAuth) throw new Error("Not authenticated");
+  const token = await sharedAuth.getAccessToken();
+  await sendChatMessage(token, chatId, text);
+  log.info(`unified-inbox: sent Teams message to chat ${chatId}`);
+}
+
+async function routeToWhatsApp(
+  text: string,
+  jid: string,
+  log: Logger,
+): Promise<void> {
+  if (!sharedWhatsAppSend) {
+    throw new Error("WhatsApp send not available");
+  }
+  await sharedWhatsAppSend(jid, text);
+  log.info(`unified-inbox: sent WhatsApp message to ${jid}`);
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@openclaw/unified-inbox",
+  "version": "2026.2.16",
+  "description": "Unified Inbox: bridge Microsoft 365 email, calendar, Teams chat, and WhatsApp through Telegram",
+  "type": "module",
+  "dependencies": {
+    "@azure/msal-node": "^2.16.2"
+  },
+  "devDependencies": {
+    "openclaw": "workspace:*"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
