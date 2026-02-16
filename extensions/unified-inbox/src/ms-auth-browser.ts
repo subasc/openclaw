@@ -13,9 +13,8 @@ import type { TokenData, IMsAuthProvider } from "./types.js";
 const TOKEN_FILE = "~/.openclaw/unified-inbox-tokens.json";
 
 // Microsoft Office Desktop public client ID (first-party, no app registration).
-// First-party clients can only use .default scope (explicit scopes like Chat.Read
-// fail with AADSTS65002). Chat.Read is not preauthorized for any first-party client,
-// so Teams chat requires admin-granted consent via a custom app registration.
+// No first-party client has Chat.Read preauthorized — Teams chat requires
+// admin-granted consent via a custom Azure AD app registration.
 const CLIENT_ID = "d3590ed6-52b3-4102-aeff-aad2292ab01c";
 const REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
 const TOKEN_ENDPOINT = "https://login.microsoftonline.com/organizations/oauth2/v2.0/token";
