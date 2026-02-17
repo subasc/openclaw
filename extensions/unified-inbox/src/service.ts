@@ -28,6 +28,7 @@ export function createUnifiedInboxService(
 ): OpenClawPluginService {
   let auth: IMsAuthProvider | null = null;
   let teamsAuth: IMsAuthProvider | null = null;
+  let outlookRestAuth: IMsAuthProvider | null = null;
   let replyStore: ReplyStore | null = null;
   let emailMonitor: EmailMonitor | null = null;
   let calendarMonitor: CalendarMonitor | null = null;
@@ -53,6 +54,12 @@ export function createUnifiedInboxService(
         );
       }
 
+      // Outlook REST API auth (same tab, different token resource — has Mail.Send scope)
+      outlookRestAuth = new BrowserTokenAuth(
+        { cdpPort: cfg.browserCdpPort, pageUrl: "https://outlook.office.com", pageName: "Outlook-REST", resource: "outlook.office.com" },
+        log,
+      );
+
       log.info("unified-inbox: using CDP token extraction (Outlook" + (teamsAuth ? " + Teams" : "") + ")");
 
       // 2. Initialize reply store
@@ -68,9 +75,10 @@ export function createUnifiedInboxService(
       setWhatsAppBridgeReplyStore(replyStore);
 
       // 4. Try loading tokens from browser tabs (parallel — share the CDP wait)
-      const [hasOutlookTokens, hasTeamsTokens] = await Promise.all([
+      const [hasOutlookTokens, hasTeamsTokens, hasOutlookRestTokens] = await Promise.all([
         auth.loadPersistedTokens(),
         teamsAuth ? teamsAuth.loadPersistedTokens().catch(() => false) : Promise.resolve(false),
+        outlookRestAuth.loadPersistedTokens().catch(() => false),
       ]);
 
       if (!hasOutlookTokens && !hasTeamsTokens) {
@@ -112,6 +120,12 @@ export function createUnifiedInboxService(
         });
       }
 
+      if (hasOutlookRestTokens && outlookRestAuth) {
+        outlookRestAuth.startAutoRefresh(async (error) => {
+          log.error(`unified-inbox: Outlook REST token refresh failed: ${error}`);
+        });
+      }
+
       // 6. Start monitors with their respective auth providers.
       // Scopes are counter-intuitive: Outlook's Graph token has Chat.Read (not Mail.Read),
       // Teams' Graph token has Mail.Read/Calendars.Read (not Chat.Read).
@@ -127,10 +141,11 @@ export function createUnifiedInboxService(
         replyStore,
       });
 
-      // Wire agent tools with scope-aware auth
+      // Wire agent tools — use Outlook REST token for sending (has Mail.Send scope)
+      const mailSendAuth = hasOutlookRestTokens && outlookRestAuth ? outlookRestAuth : mailAuth;
       setToolAuthProviders({
-        mailAuth,                 // email tools need Mail.Send (Teams token)
-        chatAuth: chatAuth!,      // Teams tools need Chat.ReadWrite (Outlook token)
+        mailAuth: mailSendAuth,
+        chatAuth: chatAuth!,
         log,
       });
 
@@ -185,6 +200,7 @@ export function createUnifiedInboxService(
       teamsChatMonitor?.stop();
       auth?.stopAutoRefresh();
       teamsAuth?.stopAutoRefresh();
+      outlookRestAuth?.stopAutoRefresh();
 
       if (replyStore) {
         replyStore.stopAutoFlush();

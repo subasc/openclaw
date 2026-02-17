@@ -17,6 +17,9 @@ export type BrowserTokenAuthOptions = {
   cdpPort: number;   // e.g. 18801
   pageUrl: string;   // e.g. "https://outlook.office.com" or "https://teams.microsoft.com"
   pageName: string;  // e.g. "Outlook" or "Teams" (for logging)
+  /** Token resource to extract. Default: "graph.microsoft.com".
+   *  Use "outlook.office.com" for the Outlook REST API token (has Mail.Send). */
+  resource?: string;
 };
 
 type CdpTarget = {
@@ -42,9 +45,10 @@ const PAGE_READY_TIMEOUT_MS = 60_000;
 const CDP_CONNECT_POLL_MS = 5_000;
 const CDP_CONNECT_TIMEOUT_MS = 150_000;
 
-/** JS executed inside the page context to extract the Graph API token from MSAL cache.
+/** Build JS to execute in page context to extract a token from MSAL cache.
  *  MSAL v2 stores tokens in localStorage (not sessionStorage) on Outlook/Teams web. */
-const EXTRACT_TOKEN_JS = `(() => {
+function buildExtractTokenJs(resource: string): string {
+  return `(() => {
   const stores = [localStorage, sessionStorage];
   for (const store of stores) {
     for (const key of Object.keys(store)) {
@@ -52,7 +56,7 @@ const EXTRACT_TOKEN_JS = `(() => {
       try {
         const entry = JSON.parse(store.getItem(key));
         if (!entry || !entry.secret) continue;
-        if (key.toLowerCase().includes('graph.microsoft.com')) {
+        if (key.toLowerCase().includes('${resource.toLowerCase()}')) {
           return { token: entry.secret, expiresOn: Number(entry.expires_on || entry.expiresOn) || 0, target: entry.target || '' };
         }
       } catch {}
@@ -60,6 +64,7 @@ const EXTRACT_TOKEN_JS = `(() => {
   }
   return null;
 })()`;
+}
 
 /**
  * Extracts Graph API tokens directly from MSAL token cache in a live
@@ -76,6 +81,8 @@ export class BrowserTokenAuth implements IMsAuthProvider {
   private readonly pageUrl: string;
   private readonly pageUrlHost: string;
   private readonly pageName: string;
+  private readonly resource: string;
+  private readonly extractTokenJs: string;
   private readonly log: Logger;
 
   constructor(opts: BrowserTokenAuthOptions, log: Logger) {
@@ -83,6 +90,8 @@ export class BrowserTokenAuth implements IMsAuthProvider {
     this.pageUrl = opts.pageUrl;
     this.pageUrlHost = new URL(opts.pageUrl).hostname;
     this.pageName = opts.pageName;
+    this.resource = opts.resource ?? "graph.microsoft.com";
+    this.extractTokenJs = buildExtractTokenJs(this.resource);
     this.log = log;
   }
 
@@ -298,7 +307,7 @@ export class BrowserTokenAuth implements IMsAuthProvider {
             id: 1,
             method: "Runtime.evaluate",
             params: {
-              expression: EXTRACT_TOKEN_JS,
+              expression: this.extractTokenJs,
               returnByValue: true,
               awaitPromise: false,
             },

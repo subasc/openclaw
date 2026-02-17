@@ -237,6 +237,68 @@ export async function sendChatMessage(
   });
 }
 
+// ============================================================================
+// Outlook REST API (uses outlook.office.com token which has Mail.Send scope)
+// ============================================================================
+
+const OUTLOOK_REST_ROOT = "https://outlook.office.com/api/v2.0";
+
+/** Send a new email via the Outlook REST API (requires outlook.office.com token with Mail.Send) */
+export async function sendMailViaOutlookRest(
+  token: string,
+  params: { to: string; subject: string; body: string },
+): Promise<void> {
+  const res = await fetch(`${OUTLOOK_REST_ROOT}/me/sendmail`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      Message: {
+        Subject: params.subject,
+        Body: { ContentType: "Text", Content: params.body },
+        ToRecipients: [
+          { EmailAddress: { Address: params.to } },
+        ],
+      },
+      SaveToSentItems: true,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Outlook REST API ${res.status}: ${text.slice(0, 500)}`);
+  }
+}
+
+/** Reply to an email via the Outlook REST API */
+export async function replyToEmailViaOutlookRest(
+  token: string,
+  messageId: string,
+  body: string,
+): Promise<void> {
+  const res = await fetch(`${OUTLOOK_REST_ROOT}/me/messages/${messageId}/reply`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      Comment: body,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Outlook REST API ${res.status}: ${text.slice(0, 500)}`);
+  }
+}
+
+// ============================================================================
+// User profile
+// ============================================================================
+
 /** Get current user's profile */
 export async function getMe(
   token: string,

@@ -4,7 +4,7 @@
 
 import { Type } from "@sinclair/typebox";
 import type { IMsAuthProvider } from "./types.js";
-import { sendMail, replyToEmail, sendChatMessage, listChats } from "./ms-graph-client.js";
+import { sendMailViaOutlookRest, replyToEmailViaOutlookRest, sendChatMessage, listChats } from "./ms-graph-client.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 
@@ -54,7 +54,7 @@ export const sendEmailTool = {
     if (!body) throw new Error("'body' is required");
 
     const token = await mailAuth.getAccessToken();
-    await sendMail(token, { to, subject, body });
+    await sendMailViaOutlookRest(token, { to, subject, body });
     toolLogger?.info(`unified-inbox: tool sent email to ${to} — "${subject}"`);
     return json({ success: true, to, subject });
   },
@@ -81,7 +81,7 @@ export const replyEmailTool = {
     if (!body) throw new Error("'body' is required");
 
     const token = await mailAuth.getAccessToken();
-    await replyToEmail(token, messageId, body);
+    await replyToEmailViaOutlookRest(token, messageId, body);
     toolLogger?.info(`unified-inbox: tool replied to email ${messageId}`);
     return json({ success: true, messageId });
   },
