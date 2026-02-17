@@ -10,6 +10,7 @@ import { sendTelegramMessage } from "./telegram-sender.js";
 
 // Shared state set by service.ts after initialization
 let sharedAuth: IMsAuthProvider | null = null;
+let sharedTeamsAuth: IMsAuthProvider | null = null;
 let sharedReplyStore: ReplyStore | null = null;
 let sharedWhatsAppSend:
   | ((jid: string, text: string) => Promise<void>)
@@ -17,10 +18,12 @@ let sharedWhatsAppSend:
 
 export function setReplyRouterDependencies(deps: {
   auth: IMsAuthProvider;
+  teamsAuth?: IMsAuthProvider;
   replyStore: ReplyStore;
   whatsAppSend?: (jid: string, text: string) => Promise<void>;
 }): void {
   sharedAuth = deps.auth;
+  sharedTeamsAuth = deps.teamsAuth ?? deps.auth;
   sharedReplyStore = deps.replyStore;
   if (deps.whatsAppSend) sharedWhatsAppSend = deps.whatsAppSend;
 }
@@ -111,8 +114,8 @@ async function routeToTeams(
   chatId: string,
   log: Logger,
 ): Promise<void> {
-  if (!sharedAuth) throw new Error("Not authenticated");
-  const token = await sharedAuth.getAccessToken();
+  if (!sharedTeamsAuth) throw new Error("Teams auth not available");
+  const token = await sharedTeamsAuth.getAccessToken();
   await sendChatMessage(token, chatId, text);
   log.info(`unified-inbox: sent Teams message to chat ${chatId}`);
 }

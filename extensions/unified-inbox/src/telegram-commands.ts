@@ -18,6 +18,7 @@ import {
 
 // Shared state — set by service.ts after initialization
 let sharedAuth: IMsAuthProvider | null = null;
+let sharedTeamsAuth: IMsAuthProvider | null = null;
 let sharedAuthMode: "browser" | "device-code" = "browser";
 let sharedEmailMonitor: EmailMonitor | null = null;
 let sharedCalendarMonitor: CalendarMonitor | null = null;
@@ -25,12 +26,14 @@ let sharedTeamsChatMonitor: TeamsChatMonitor | null = null;
 
 export function setCommandDependencies(deps: {
   auth: IMsAuthProvider;
+  teamsAuth?: IMsAuthProvider | null;
   authMode?: "browser" | "device-code";
   emailMonitor?: EmailMonitor;
   calendarMonitor?: CalendarMonitor;
   teamsChatMonitor?: TeamsChatMonitor;
 }): void {
   sharedAuth = deps.auth;
+  sharedTeamsAuth = deps.teamsAuth ?? null;
   sharedAuthMode = deps.authMode ?? "browser";
   sharedEmailMonitor = deps.emailMonitor ?? null;
   sharedCalendarMonitor = deps.calendarMonitor ?? null;
@@ -114,8 +117,8 @@ export function registerInboxCommands(
     name: "teams",
     description: "Show recent Teams chat activity",
     handler: async (_ctx) => {
-      if (!sharedAuth?.isAuthenticated()) {
-        return { text: "Not authenticated. Use /inbox_login first." };
+      if (!sharedTeamsAuth?.isAuthenticated()) {
+        return { text: "Teams not authenticated. Is the browser running and logged into Teams?" };
       }
 
       try {
@@ -219,7 +222,8 @@ export function registerInboxCommands(
     name: "inbox_status",
     description: "Show Unified Inbox monitor statuses",
     handler: async (_ctx) => {
-      const authenticated = sharedAuth?.isAuthenticated() ?? false;
+      const outlookAuth = sharedAuth?.isAuthenticated() ?? false;
+      const teamsAuth = sharedTeamsAuth?.isAuthenticated() ?? false;
 
       const formatStatus = (name: string, status: { running: boolean; paused: boolean; lastPollAt: number | null; lastError: string | null } | null): string => {
         if (!status) return `${name}: not configured`;
@@ -238,8 +242,9 @@ export function registerInboxCommands(
       };
 
       const lines = [
-        `Auth mode: ${sharedAuthMode}`,
-        `Authenticated: ${authenticated ? "yes" : "NO"}`,
+        `Auth mode: CDP token extraction`,
+        `Outlook auth: ${outlookAuth ? "yes" : "NO"}`,
+        `Teams auth: ${teamsAuth ? "yes" : "NO"}`,
         "",
         formatStatus("Email", sharedEmailMonitor?.status ?? null),
         formatStatus("Calendar", sharedCalendarMonitor?.status ?? null),

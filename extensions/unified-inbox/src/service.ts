@@ -9,8 +9,7 @@ import type {
 } from "openclaw/plugin-sdk";
 import type { UnifiedInboxConfig } from "./config.js";
 import type { IMsAuthProvider } from "./types.js";
-import { MsAuth } from "./ms-auth.js";
-import { MsAuthBrowser } from "./ms-auth-browser.js";
+import { BrowserTokenAuth } from "./browser-token-auth.js";
 import { ReplyStore } from "./reply-store.js";
 import { EmailMonitor } from "./email-monitor.js";
 import { CalendarMonitor } from "./calendar-monitor.js";
@@ -27,6 +26,7 @@ export function createUnifiedInboxService(
   log: Logger,
 ): OpenClawPluginService {
   let auth: IMsAuthProvider | null = null;
+  let teamsAuth: IMsAuthProvider | null = null;
   let replyStore: ReplyStore | null = null;
   let emailMonitor: EmailMonitor | null = null;
   let calendarMonitor: CalendarMonitor | null = null;
@@ -38,27 +38,21 @@ export function createUnifiedInboxService(
     async start(_ctx: OpenClawPluginServiceContext): Promise<void> {
       log.info("unified-inbox: service starting...");
 
-      // 1. Initialize auth provider based on config
-      if (cfg.authMode === "browser") {
-        auth = new MsAuthBrowser(
-          {
-            browserProfile: cfg.browserProfile,
-            cdpPort: cfg.browserCdpPort,
-            tokenFile: cfg.microsoft.tokenFile,
-          },
+      // 1. Initialize auth providers — CDP token extraction from live browser tabs
+      const outlookAuth = new BrowserTokenAuth(
+        { cdpPort: cfg.browserCdpPort, pageUrl: "https://outlook.office.com", pageName: "Outlook" },
+        log,
+      );
+      auth = outlookAuth;
+
+      if (cfg.teamsChat.enabled) {
+        teamsAuth = new BrowserTokenAuth(
+          { cdpPort: cfg.browserCdpPort, pageUrl: "https://teams.microsoft.com", pageName: "Teams" },
           log,
         );
-        log.info(
-          `unified-inbox: using browser auth (profile "${cfg.browserProfile}")`,
-        );
-      } else {
-        auth = new MsAuth({
-          clientId: cfg.microsoft.clientId,
-          tenantId: cfg.microsoft.tenantId,
-          tokenFile: cfg.microsoft.tokenFile,
-        });
-        log.info("unified-inbox: using device-code auth");
       }
+
+      log.info("unified-inbox: using CDP token extraction (Outlook" + (teamsAuth ? " + Teams" : "") + ")");
 
       // 2. Initialize reply store
       replyStore = new ReplyStore({
@@ -71,55 +65,72 @@ export function createUnifiedInboxService(
 
       // 3. Wire up shared dependencies
       setWhatsAppBridgeReplyStore(replyStore);
-      setReplyRouterDependencies({ auth, replyStore });
+      setReplyRouterDependencies({ auth, teamsAuth: teamsAuth ?? auth, replyStore });
 
-      // 4. Try loading persisted tokens
-      const hasTokens = await auth.loadPersistedTokens();
+      // 4. Try loading tokens from browser tabs
+      const hasOutlookTokens = await auth.loadPersistedTokens();
+      const hasTeamsTokens = teamsAuth
+        ? await teamsAuth.loadPersistedTokens().catch(() => false)
+        : false;
 
-      if (!hasTokens) {
+      if (!hasOutlookTokens && !hasTeamsTokens) {
         log.info(
-          "unified-inbox: no valid tokens found. Use /inbox_login to authenticate.",
+          "unified-inbox: no tokens found. Is the browser running and logged into Microsoft 365?",
         );
         await sendTelegramMessage({
           botToken: cfg.telegramBotToken,
           chatId: cfg.telegramChatId,
-          text: `[Unified Inbox] Started but not authenticated (${cfg.authMode} mode). Send /inbox_login to connect your Microsoft 365 account.`,
+          text: "[Unified Inbox] Started but no tokens found. Make sure the browser profile is running and you're logged into Microsoft 365.",
         });
 
-        // Still wire up commands so /inbox_login works
-        setCommandDependencies({ auth, authMode: cfg.authMode });
+        // Still wire up commands so /inbox_status works
+        setCommandDependencies({ auth, teamsAuth, authMode: cfg.authMode });
         return;
       }
 
-      // 5. Start auto-refresh for Microsoft tokens
-      auth.startAutoRefresh(async (error) => {
-        log.error(`unified-inbox: token refresh failed: ${error}`);
-        await sendTelegramMessage({
-          botToken: cfg.telegramBotToken,
-          chatId: cfg.telegramChatId,
-          text: `[Unified Inbox] Token refresh failed: ${error}\nUse /inbox_login to re-authenticate.`,
+      // 5. Start auto-refresh for token re-extraction
+      if (hasOutlookTokens) {
+        auth.startAutoRefresh(async (error) => {
+          log.error(`unified-inbox: Outlook token refresh failed: ${error}`);
+          await sendTelegramMessage({
+            botToken: cfg.telegramBotToken,
+            chatId: cfg.telegramChatId,
+            text: `[Unified Inbox] Outlook token refresh failed: ${error}`,
+          });
         });
-      });
+      }
 
-      // 6. Start monitors
-      if (cfg.email.enabled) {
+      if (hasTeamsTokens && teamsAuth) {
+        teamsAuth.startAutoRefresh(async (error) => {
+          log.error(`unified-inbox: Teams token refresh failed: ${error}`);
+          await sendTelegramMessage({
+            botToken: cfg.telegramBotToken,
+            chatId: cfg.telegramChatId,
+            text: `[Unified Inbox] Teams token refresh failed: ${error}`,
+          });
+        });
+      }
+
+      // 6. Start monitors with their respective auth providers
+      if (cfg.email.enabled && hasOutlookTokens) {
         emailMonitor = new EmailMonitor(cfg, auth, replyStore, log);
         await emailMonitor.start();
       }
 
-      if (cfg.calendar.enabled) {
+      if (cfg.calendar.enabled && hasOutlookTokens) {
         calendarMonitor = new CalendarMonitor(cfg, auth, log);
         await calendarMonitor.start();
       }
 
-      if (cfg.teamsChat.enabled) {
-        teamsChatMonitor = new TeamsChatMonitor(cfg, auth, replyStore, log);
+      if (cfg.teamsChat.enabled && hasTeamsTokens && teamsAuth) {
+        teamsChatMonitor = new TeamsChatMonitor(cfg, teamsAuth, replyStore, log);
         await teamsChatMonitor.start();
       }
 
       // 7. Wire up command dependencies (with monitors)
       setCommandDependencies({
         auth,
+        teamsAuth,
         authMode: cfg.authMode,
         emailMonitor: emailMonitor ?? undefined,
         calendarMonitor: calendarMonitor ?? undefined,
@@ -128,19 +139,19 @@ export function createUnifiedInboxService(
 
       // 8. Notify startup
       const monitors = [
-        cfg.email.enabled ? "Email" : null,
-        cfg.calendar.enabled ? "Calendar" : null,
-        cfg.teamsChat.enabled ? "Teams Chat" : null,
+        emailMonitor ? "Email" : null,
+        calendarMonitor ? "Calendar" : null,
+        teamsChatMonitor ? "Teams Chat" : null,
         cfg.whatsapp.enabled ? "WhatsApp Bridge" : null,
       ]
         .filter(Boolean)
         .join(", ");
 
-      log.info(`unified-inbox: all monitors started (${monitors})`);
+      log.info(`unified-inbox: monitors started (${monitors || "none"})`);
       await sendTelegramMessage({
         botToken: cfg.telegramBotToken,
         chatId: cfg.telegramChatId,
-        text: `[Unified Inbox] Started successfully (${cfg.authMode} mode). Active monitors: ${monitors}`,
+        text: `[Unified Inbox] Started (CDP token extraction). Active monitors: ${monitors || "none"}`,
       });
     },
 
@@ -151,6 +162,7 @@ export function createUnifiedInboxService(
       calendarMonitor?.stop();
       teamsChatMonitor?.stop();
       auth?.stopAutoRefresh();
+      teamsAuth?.stopAutoRefresh();
 
       if (replyStore) {
         replyStore.stopAutoFlush();
