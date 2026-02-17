@@ -6,6 +6,7 @@ import type { EchoTracker } from "./echo.js";
 import type { GroupHistoryEntry } from "./group-gating.js";
 import { loadConfig } from "../../../config/config.js";
 import { logVerbose } from "../../../globals.js";
+import { getGlobalHookRunner } from "../../../plugins/hook-runner-global.js";
 import { resolveAgentRoute } from "../../../routing/resolve-route.js";
 import { buildGroupHistoryKey } from "../../../routing/session-key.js";
 import { normalizeE164 } from "../../../utils.js";
@@ -93,6 +94,42 @@ export function createWebOnMessageHandler(params: {
       logVerbose("Skipping auto-reply: detected echo (message matches recently sent text)");
       params.echoTracker.forget(msg.body);
       return;
+    }
+
+    // Fire message_received hook for ALL inbound WhatsApp messages, before group
+    // gating which may block them from the auto-reply pipeline.  Plugins like
+    // the WhatsApp bridge need to see every message.
+    const hookRunner = getGlobalHookRunner();
+    if (hookRunner?.hasHooks("message_received")) {
+      void hookRunner
+        .runMessageReceived(
+          {
+            from: msg.from,
+            content: msg.body,
+            timestamp: msg.timestamp,
+            metadata: {
+              to: msg.to,
+              provider: "whatsapp",
+              surface: "whatsapp",
+              originatingChannel: "whatsapp",
+              messageId: msg.id,
+              senderId: msg.senderJid?.trim() || msg.senderE164,
+              senderName: msg.senderName || msg.pushName,
+              senderE164: msg.senderE164,
+              pushName: msg.pushName,
+              groupName: msg.groupSubject,
+              groupJid: msg.chatType === "group" ? msg.from : undefined,
+              fromMe: false,
+              isSelf: false,
+            },
+          },
+          {
+            channelId: "whatsapp",
+            accountId: msg.accountId,
+            conversationId: msg.conversationId ?? msg.from,
+          },
+        )
+        .catch(() => {});
     }
 
     if (msg.chatType === "group") {

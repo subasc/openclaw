@@ -166,35 +166,39 @@ export async function dispatchReplyFromConfig(params: {
     const channelId = (ctx.OriginatingChannel ?? ctx.Surface ?? ctx.Provider ?? "").toLowerCase();
     const conversationId = ctx.OriginatingTo ?? ctx.To ?? ctx.From ?? undefined;
 
-    void hookRunner
-      .runMessageReceived(
-        {
-          from: ctx.From ?? "",
-          content,
-          timestamp,
-          metadata: {
-            to: ctx.To,
-            provider: ctx.Provider,
-            surface: ctx.Surface,
-            threadId: ctx.MessageThreadId,
-            originatingChannel: ctx.OriginatingChannel,
-            originatingTo: ctx.OriginatingTo,
-            messageId: messageIdForHook,
-            senderId: ctx.SenderId,
-            senderName: ctx.SenderName,
-            senderUsername: ctx.SenderUsername,
-            senderE164: ctx.SenderE164,
+    // WhatsApp messages fire the hook earlier (in on-message.ts, before group
+    // gating).  Skip here to avoid double-firing.
+    if (channelId !== "whatsapp") {
+      void hookRunner
+        .runMessageReceived(
+          {
+            from: ctx.From ?? "",
+            content,
+            timestamp,
+            metadata: {
+              to: ctx.To,
+              provider: ctx.Provider,
+              surface: ctx.Surface,
+              threadId: ctx.MessageThreadId,
+              originatingChannel: ctx.OriginatingChannel,
+              originatingTo: ctx.OriginatingTo,
+              messageId: messageIdForHook,
+              senderId: ctx.SenderId,
+              senderName: ctx.SenderName,
+              senderUsername: ctx.SenderUsername,
+              senderE164: ctx.SenderE164,
+            },
           },
-        },
-        {
-          channelId,
-          accountId: ctx.AccountId,
-          conversationId,
-        },
-      )
-      .catch((err) => {
-        logVerbose(`dispatch-from-config: message_received hook failed: ${String(err)}`);
-      });
+          {
+            channelId,
+            accountId: ctx.AccountId,
+            conversationId,
+          },
+        )
+        .catch((err) => {
+          logVerbose(`dispatch-from-config: message_received hook failed: ${String(err)}`);
+        });
+    }
   }
 
   // Check if we should route replies to originating channel instead of dispatcher.

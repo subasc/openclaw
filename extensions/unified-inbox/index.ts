@@ -4,6 +4,7 @@ import { createUnifiedInboxService } from "./src/service.js";
 import { createReplyRouter } from "./src/reply-router.js";
 import { createWhatsAppBridge } from "./src/whatsapp-bridge.js";
 import { registerInboxCommands } from "./src/telegram-commands.js";
+import { formatNotificationsAsContext } from "./src/notification-store.js";
 
 const plugin = {
   id: "unified-inbox",
@@ -50,6 +51,15 @@ const plugin = {
 
     // Register Telegram slash commands
     registerInboxCommands(api, cfg);
+
+    // Inject recent notifications into AI agent context so it can answer
+    // questions about emails, calendar events, and Teams messages
+    api.on("before_agent_start", () => {
+      const context = formatNotificationsAsContext();
+      if (context) {
+        return { prependContext: context };
+      }
+    });
 
     api.logger.info("unified-inbox: registered successfully");
   },

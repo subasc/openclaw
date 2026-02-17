@@ -6,7 +6,8 @@
 import type { ReplyStore } from "./reply-store.js";
 import type { UnifiedInboxConfig } from "./config.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
-import { formatWhatsAppNotification } from "./formatters.js";
+import { formatWhatsAppNotification, formatWhatsAppPlain } from "./formatters.js";
+import { pushNotification } from "./notification-store.js";
 
 // Lazy-loaded shared reply store (set by service.ts)
 let sharedReplyStore: ReplyStore | null = null;
@@ -65,6 +66,18 @@ export function createWhatsAppBridge(
         chatId: cfg.telegramChatId,
         text,
         parseMode: "MarkdownV2",
+      });
+
+      // Push plain text to notification store for AI agent context
+      pushNotification({
+        source: "whatsapp",
+        text: formatWhatsAppPlain({
+          from: event.from,
+          content: event.content,
+          senderName,
+          groupName,
+        }),
+        timestamp: Date.now(),
       });
 
       if (result.ok && result.messageId && sharedReplyStore) {

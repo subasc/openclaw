@@ -7,7 +7,8 @@ import type { UnifiedInboxConfig } from "./config.js";
 import type { MonitorStatus, EmailMessage, IMsAuthProvider } from "./types.js";
 import { fetchMailDelta, markAsRead } from "./ms-graph-client.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
-import { formatEmailNotification } from "./formatters.js";
+import { formatEmailNotification, formatEmailPlain } from "./formatters.js";
+import { pushNotification } from "./notification-store.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 
@@ -150,6 +151,13 @@ export class EmailMonitor {
       chatId: this.cfg.telegramChatId,
       text,
       parseMode: "MarkdownV2",
+    });
+
+    // Push plain text to notification store for AI agent context
+    pushNotification({
+      source: "email",
+      text: formatEmailPlain(email),
+      timestamp: Date.now(),
     });
 
     if (result.ok && result.messageId) {

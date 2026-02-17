@@ -7,7 +7,8 @@ import type { UnifiedInboxConfig } from "./config.js";
 import type { MonitorStatus, TeamsChat, TeamsChatMessage, IMsAuthProvider } from "./types.js";
 import { listChats, listChatMessages } from "./ms-graph-client.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
-import { formatTeamsChatNotification } from "./formatters.js";
+import { formatTeamsChatNotification, formatTeamsChatPlain } from "./formatters.js";
+import { pushNotification } from "./notification-store.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 
@@ -181,6 +182,13 @@ export class TeamsChatMonitor {
       chatId: this.cfg.telegramChatId,
       text,
       parseMode: "MarkdownV2",
+    });
+
+    // Push plain text to notification store for AI agent context
+    pushNotification({
+      source: "teams",
+      text: formatTeamsChatPlain(msg, chatName),
+      timestamp: Date.now(),
     });
 
     if (result.ok && result.messageId) {

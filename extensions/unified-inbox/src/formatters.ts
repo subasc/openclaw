@@ -186,6 +186,67 @@ export function formatWhatsAppNotification(msg: WhatsAppInboundMessage): string 
 }
 
 // ============================================================================
+// Plain text formatters (for AI agent context injection)
+// ============================================================================
+
+export function formatEmailPlain(email: EmailMessage): string {
+  const from = email.from?.emailAddress;
+  const fromName = from?.name || from?.address || "Unknown";
+  const fromAddr = from?.address || "";
+  const subject = email.subject || "(no subject)";
+  const preview = truncate(email.bodyPreview || "", 500);
+  const time = formatTime(email.receivedDateTime);
+
+  return [
+    `[Email] From: ${fromName}${fromAddr ? ` <${fromAddr}>` : ""}`,
+    `Subject: ${subject}`,
+    `Time: ${time}${email.hasAttachments ? " | Attachments: yes" : ""}`,
+    preview,
+  ].join("\n");
+}
+
+export function formatCalendarReminderPlain(
+  event: CalendarEvent,
+  minutesBefore: number,
+): string {
+  const startTime = formatTime(event.start.dateTime);
+  const location = event.location?.displayName;
+  const joinUrl = event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
+
+  const lines = [
+    `[Calendar Reminder] "${event.subject}" starts in ${minutesBefore} min`,
+    `Time: ${startTime}`,
+  ];
+  if (location) lines.push(`Location: ${location}`);
+  if (joinUrl) lines.push(`Join: ${joinUrl}`);
+  return lines.join("\n");
+}
+
+export function formatTeamsChatPlain(
+  msg: TeamsChatMessage,
+  chatName: string,
+): string {
+  const sender =
+    msg.from?.user?.displayName ||
+    msg.from?.application?.displayName ||
+    "Unknown";
+  const bodyText = stripHtml(msg.body?.content || "");
+  const time = formatTime(msg.createdDateTime);
+
+  return [
+    `[Teams Chat] ${chatName}`,
+    `${sender} (${time}):`,
+    truncate(bodyText, 500),
+  ].join("\n");
+}
+
+export function formatWhatsAppPlain(msg: WhatsAppInboundMessage): string {
+  const sender = msg.senderName || msg.from || "Unknown";
+  const group = msg.groupName ? ` in ${msg.groupName}` : "";
+  return `[WhatsApp] ${sender}${group}: ${truncate(msg.content, 500)}`;
+}
+
+// ============================================================================
 // Helpers
 // ============================================================================
 

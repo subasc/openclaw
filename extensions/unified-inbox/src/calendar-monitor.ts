@@ -9,7 +9,9 @@ import { sendTelegramMessage } from "./telegram-sender.js";
 import {
   formatCalendarNotification,
   formatCalendarReminder,
+  formatCalendarReminderPlain,
 } from "./formatters.js";
+import { pushNotification } from "./notification-store.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
 
@@ -148,6 +150,13 @@ export class CalendarMonitor {
       chatId: this.cfg.telegramChatId,
       text,
       parseMode: "MarkdownV2",
+    });
+
+    // Push plain text to notification store for AI agent context
+    pushNotification({
+      source: "calendar",
+      text: formatCalendarReminderPlain(event, minutesBefore),
+      timestamp: Date.now(),
     });
   }
 
