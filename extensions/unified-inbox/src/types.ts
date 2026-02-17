@@ -114,6 +114,10 @@ export interface IMsAuthProvider {
   loadPersistedTokens(): Promise<boolean>;
   startAutoRefresh(onError: (error: string) => Promise<void>): void;
   stopAutoRefresh(): void;
+  /** Register callback invoked when token recovers after failure */
+  setOnTokenRecovered?(cb: () => void): void;
+  /** Force token refresh/recovery (for remote management commands) */
+  forceRefresh?(): Promise<boolean>;
 }
 
 /** Token data persisted to disk */

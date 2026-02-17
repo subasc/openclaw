@@ -2,6 +2,10 @@
 // CDP-based token extraction from Microsoft web apps
 // Extracts Graph API tokens from MSAL sessionStorage in live browser tabs.
 // Each instance manages ONE tab (e.g. Outlook or Teams).
+//
+// Includes automatic token recovery when tokens expire:
+//   Phase 1: Clear stale MSAL cache → reload browser tab → poll for fresh token
+//   Phase 2: Use refresh token + Azure AD /oauth2/v2.0/token to acquire new token
 // ============================================================================
 
 import http from "node:http";
@@ -44,9 +48,15 @@ const PAGE_READY_TIMEOUT_MS = 60_000;
 // Wait for CDP port: poll every 5s for up to 150s (browser may start well after daemon)
 const CDP_CONNECT_POLL_MS = 5_000;
 const CDP_CONNECT_TIMEOUT_MS = 150_000;
+// Recovery: poll every 3s for up to 30s after clearing stale tokens + reload
+const RECOVERY_POLL_MS = 3_000;
+const RECOVERY_POLL_TIMEOUT_MS = 30_000;
 
-/** Build JS to execute in page context to extract a token from MSAL cache.
- *  MSAL v2 stores tokens in localStorage (not sessionStorage) on Outlook/Teams web. */
+// ---------------------------------------------------------------------------
+// JS builders — generate code to evaluate in browser context via CDP
+// ---------------------------------------------------------------------------
+
+/** Build JS to extract a token from MSAL cache (localStorage + sessionStorage). */
 function buildExtractTokenJs(resource: string): string {
   return `(() => {
   const stores = [localStorage, sessionStorage];
@@ -66,12 +76,150 @@ function buildExtractTokenJs(resource: string): string {
 })()`;
 }
 
+/** Build JS to clear expired/stale accesstoken entries for a resource from localStorage. */
+function buildClearStaleTokensJs(resource: string): string {
+  return `(() => {
+  let cleared = 0;
+  for (const key of Object.keys(localStorage)) {
+    if (!key.toLowerCase().includes('accesstoken')) continue;
+    try {
+      const entry = JSON.parse(localStorage.getItem(key));
+      if (!entry || !entry.secret) continue;
+      const expiresOn = Number(entry.expires_on || entry.expiresOn) || 0;
+      const isExpired = expiresOn > 0 && expiresOn * 1000 < Date.now();
+      if (isExpired || key.toLowerCase().includes('${resource.toLowerCase()}')) {
+        localStorage.removeItem(key);
+        cleared++;
+      }
+    } catch {}
+  }
+  return { cleared };
+})()`;
+}
+
+/** Build JS to acquire a token via refresh token + Azure AD token endpoint.
+ *  Runs entirely in browser context (uses page's fetch + localStorage). */
+function buildAcquireTokenViaRefreshJs(resource: string): string {
+  return `(async () => {
+  // 1. Find refresh token in MSAL cache
+  let refreshToken = null;
+  for (const key of Object.keys(localStorage)) {
+    if (key.toLowerCase().includes("refreshtoken")) {
+      try {
+        const entry = JSON.parse(localStorage.getItem(key));
+        if (entry && entry.secret) { refreshToken = entry.secret; break; }
+      } catch {}
+    }
+  }
+  if (!refreshToken) return { error: "No refresh token found in localStorage" };
+
+  // 2. Find MSAL account info (clientId, tenantId, homeAccountId)
+  let clientId = null;
+  for (const key of Object.keys(localStorage)) {
+    if (key.startsWith("msal.") && key.includes("active-account")) {
+      clientId = key.split(".")[1];
+      break;
+    }
+  }
+  if (!clientId) return { error: "No MSAL client ID found" };
+
+  const accountKeysRaw = localStorage.getItem("msal.account.keys");
+  if (!accountKeysRaw) return { error: "No MSAL account keys" };
+  const accountKeys = JSON.parse(accountKeysRaw);
+  if (!accountKeys.length) return { error: "Empty MSAL accounts list" };
+  const accountData = JSON.parse(localStorage.getItem(accountKeys[0]));
+  if (!accountData) return { error: "MSAL account data not found" };
+
+  const tenantId = accountData.realm;
+  const homeAccountId = accountData.home_account_id;
+  if (!tenantId || !homeAccountId) return { error: "Missing tenantId or homeAccountId" };
+
+  // 3. Exchange refresh token for access token via Azure AD
+  const scope = "https://${resource}/.default";
+  const body = new URLSearchParams({
+    client_id: clientId,
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    scope: scope,
+  });
+
+  const resp = await fetch(
+    "https://login.microsoftonline.com/" + tenantId + "/oauth2/v2.0/token",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: body.toString(),
+    }
+  );
+
+  if (!resp.ok) {
+    const text = await resp.text();
+    return { error: "Azure AD " + resp.status + ": " + text.slice(0, 300) };
+  }
+
+  const data = await resp.json();
+  const expiresOn = Math.floor(Date.now() / 1000) + (data.expires_in || 3600);
+  const target = data.scope || "";
+
+  // 4. Store token in MSAL v2 cache format so extraction picks it up
+  const tokenKey = homeAccountId + "-login.windows.net-accesstoken-" + clientId + "-" + tenantId + "-" + target.toLowerCase();
+  localStorage.setItem(tokenKey, JSON.stringify({
+    home_account_id: homeAccountId,
+    environment: "login.windows.net",
+    credential_type: "AccessToken",
+    client_id: clientId,
+    secret: data.access_token,
+    realm: tenantId,
+    target: target,
+    cached_at: String(Math.floor(Date.now() / 1000)),
+    expires_on: String(expiresOn),
+    extended_expires_on: String(expiresOn + 3600),
+    token_type: "Bearer",
+  }));
+
+  // 5. Update refresh token if rotated by Azure AD
+  if (data.refresh_token) {
+    for (const key of Object.keys(localStorage)) {
+      if (key.toLowerCase().includes("refreshtoken")) {
+        try {
+          const entry = JSON.parse(localStorage.getItem(key));
+          if (entry && entry.secret) {
+            entry.secret = data.refresh_token;
+            localStorage.setItem(key, JSON.stringify(entry));
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return {
+    success: true,
+    token: data.access_token,
+    expiresOn: expiresOn,
+    scopes: target.slice(0, 200),
+  };
+})()`;
+}
+
+/** Check if a token is still fresh (expires more than 5 min from now) */
+function isTokenFresh(expiresOn: number): boolean {
+  return expiresOn * 1000 > Date.now() + REFRESH_BUFFER_MS;
+}
+
+// ---------------------------------------------------------------------------
+// BrowserTokenAuth
+// ---------------------------------------------------------------------------
+
 /**
  * Extracts Graph API tokens directly from MSAL token cache in a live
  * Microsoft web app tab (Outlook, Teams, etc.) via Chrome DevTools Protocol.
  *
  * No OAuth dialogs, no client IDs, no admin consent needed — uses tokens
  * the web app has already acquired for the logged-in user.
+ *
+ * When tokens expire, automatic recovery kicks in:
+ *   Phase 1: Clear stale MSAL entries → reload tab → poll for fresh token
+ *   Phase 2: Use refresh token to call Azure AD directly → store result in MSAL format
  */
 export class BrowserTokenAuth implements IMsAuthProvider {
   private cachedToken: string | null = null;
@@ -84,6 +232,11 @@ export class BrowserTokenAuth implements IMsAuthProvider {
   private readonly resource: string;
   private readonly extractTokenJs: string;
   private readonly log: Logger;
+
+  // Recovery state
+  private hasEverSucceeded = false;
+  private isRecovering = false;
+  private onTokenRecovered: (() => void) | null = null;
 
   constructor(opts: BrowserTokenAuthOptions, log: Logger) {
     this.cdpPort = opts.cdpPort;
@@ -156,22 +309,85 @@ export class BrowserTokenAuth implements IMsAuthProvider {
     }
   }
 
+  /** Register callback invoked when token recovers after failure */
+  setOnTokenRecovered(cb: () => void): void {
+    this.onTokenRecovered = cb;
+  }
+
+  /** Force token refresh/recovery — for remote Telegram commands.
+   *  Returns true if a fresh token was obtained. */
+  async forceRefresh(): Promise<boolean> {
+    this.log.info(`unified-inbox: ${this.pageName}: force refresh requested`);
+    try {
+      const wsUrl = await this.findOrCreateTab();
+
+      // Try direct extraction first
+      const immediate = await this.evaluateTokenExtraction(wsUrl);
+      if (immediate && isTokenFresh(immediate.expiresOn)) {
+        this.applyToken(immediate);
+        return true;
+      }
+
+      // Token missing or stale — run full recovery
+      const result = await this.attemptRecovery(wsUrl);
+      if (result.recovered) {
+        this.log.info(
+          `unified-inbox: ${this.pageName}: force refresh succeeded via ${result.method}`,
+        );
+        this.onTokenRecovered?.();
+        return true;
+      }
+
+      this.log.warn(
+        `unified-inbox: ${this.pageName}: force refresh failed — no fresh token recovered`,
+      );
+      return false;
+    } catch (err) {
+      this.log.error(
+        `unified-inbox: ${this.pageName}: force refresh error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return false;
+    }
+  }
+
   // ---------------------------------------------------------------------------
-  // CDP communication
+  // CDP communication — token extraction
   // ---------------------------------------------------------------------------
 
-  /** Find an existing tab or create a new one, then extract the MSAL token */
+  /** Find an existing tab or create a new one, then extract the MSAL token.
+   *  If token is stale and we've succeeded before, attempt automatic recovery. */
   private async extractTokenFromTab(): Promise<void> {
     const wsUrl = await this.findOrCreateTab();
 
     // Try immediate extraction first (tab may already be loaded)
     const immediate = await this.evaluateTokenExtraction(wsUrl);
     if (immediate) {
+      if (isTokenFresh(immediate.expiresOn)) {
+        this.applyToken(immediate);
+        return;
+      }
+
+      // Token found but expired — attempt recovery if we've ever had a good token
+      if (this.hasEverSucceeded && !this.isRecovering) {
+        this.log.warn(
+          `unified-inbox: ${this.pageName}: extracted token is expired, attempting recovery...`,
+        );
+        const result = await this.attemptRecovery(wsUrl);
+        if (result.recovered) {
+          this.log.info(
+            `unified-inbox: ${this.pageName}: token recovered via ${result.method}`,
+          );
+          this.onTokenRecovered?.();
+          return;
+        }
+      }
+
+      // Apply stale token as fallback (better than null for transient issues)
       this.applyToken(immediate);
       return;
     }
 
-    // Page may need time to load — poll until ready
+    // No token found — page may need time to load, poll until ready
     this.log.info(`unified-inbox: ${this.pageName}: waiting for page to load...`);
     const deadline = Date.now() + PAGE_READY_TIMEOUT_MS;
 
@@ -179,7 +395,40 @@ export class BrowserTokenAuth implements IMsAuthProvider {
       await sleep(PAGE_READY_POLL_MS);
       const result = await this.evaluateTokenExtraction(wsUrl);
       if (result) {
+        if (isTokenFresh(result.expiresOn)) {
+          this.applyToken(result);
+          return;
+        }
+        // Expired token found during polling — try recovery
+        if (this.hasEverSucceeded && !this.isRecovering) {
+          this.log.warn(
+            `unified-inbox: ${this.pageName}: polled token is expired, attempting recovery...`,
+          );
+          const recovery = await this.attemptRecovery(wsUrl);
+          if (recovery.recovered) {
+            this.log.info(
+              `unified-inbox: ${this.pageName}: token recovered via ${recovery.method}`,
+            );
+            this.onTokenRecovered?.();
+            return;
+          }
+        }
         this.applyToken(result);
+        return;
+      }
+    }
+
+    // Timed out with no token — attempt recovery if we've succeeded before
+    if (this.hasEverSucceeded && !this.isRecovering) {
+      this.log.warn(
+        `unified-inbox: ${this.pageName}: no token after ${PAGE_READY_TIMEOUT_MS / 1000}s, attempting recovery...`,
+      );
+      const result = await this.attemptRecovery(wsUrl);
+      if (result.recovered) {
+        this.log.info(
+          `unified-inbox: ${this.pageName}: token recovered via ${result.method}`,
+        );
+        this.onTokenRecovered?.();
         return;
       }
     }
@@ -194,10 +443,196 @@ export class BrowserTokenAuth implements IMsAuthProvider {
     this.cachedToken = extracted.token;
     // MSAL stores expiresOn as Unix epoch seconds
     this.expiresAt = extracted.expiresOn * 1000;
+    if (isTokenFresh(extracted.expiresOn)) {
+      this.hasEverSucceeded = true;
+    }
     this.log.info(
       `unified-inbox: ${this.pageName}: token extracted (expires ${new Date(this.expiresAt).toLocaleTimeString()}, scopes: ${extracted.target})`,
     );
   }
+
+  // ---------------------------------------------------------------------------
+  // Token recovery
+  // ---------------------------------------------------------------------------
+
+  /** Full recovery pipeline:
+   *  Phase 1: Clear stale tokens → reload tab → poll 30s for fresh token
+   *  Phase 2: Use refresh token via Azure AD to acquire a new token directly */
+  private async attemptRecovery(
+    wsUrl: string,
+  ): Promise<{ recovered: boolean; method?: string }> {
+    if (this.isRecovering) return { recovered: false };
+    this.isRecovering = true;
+
+    try {
+      // --- Phase 1: Clear stale MSAL entries + reload browser tab ---
+      this.log.info(
+        `unified-inbox: ${this.pageName}: recovery phase 1 — clearing stale tokens + reloading tab`,
+      );
+
+      const clearResult = await this.evaluateJs<{ cleared: number }>(
+        wsUrl,
+        buildClearStaleTokensJs(this.resource),
+      );
+      this.log.info(
+        `unified-inbox: ${this.pageName}: cleared ${clearResult?.cleared ?? 0} stale token entries`,
+      );
+
+      await this.reloadTab(wsUrl);
+
+      // Poll for fresh token after reload
+      const phase1Deadline = Date.now() + RECOVERY_POLL_TIMEOUT_MS;
+      while (Date.now() < phase1Deadline) {
+        await sleep(RECOVERY_POLL_MS);
+        const result = await this.evaluateTokenExtraction(wsUrl);
+        if (result && isTokenFresh(result.expiresOn)) {
+          this.applyToken(result);
+          return { recovered: true, method: "tab-reload" };
+        }
+      }
+
+      this.log.info(
+        `unified-inbox: ${this.pageName}: phase 1 did not produce a fresh token`,
+      );
+
+      // --- Phase 2: Acquire token via Azure AD refresh token exchange ---
+      this.log.info(
+        `unified-inbox: ${this.pageName}: recovery phase 2 — acquiring token via Azure AD refresh token`,
+      );
+
+      const acquireResult = await this.evaluateJs<{
+        success?: boolean;
+        error?: string;
+        token?: string;
+        expiresOn?: number;
+        scopes?: string;
+      }>(wsUrl, buildAcquireTokenViaRefreshJs(this.resource), true);
+
+      if (acquireResult?.success && acquireResult.token && acquireResult.expiresOn) {
+        this.applyToken({
+          token: acquireResult.token,
+          expiresOn: acquireResult.expiresOn,
+          target: acquireResult.scopes ?? "",
+        });
+        return { recovered: true, method: "refresh-token-exchange" };
+      }
+
+      if (acquireResult?.error) {
+        this.log.error(
+          `unified-inbox: ${this.pageName}: refresh token exchange failed: ${acquireResult.error}`,
+        );
+      }
+
+      // Final check — the acquire step stores the token in localStorage,
+      // so extraction should find it even if the return value was lost
+      const finalCheck = await this.evaluateTokenExtraction(wsUrl);
+      if (finalCheck && isTokenFresh(finalCheck.expiresOn)) {
+        this.applyToken(finalCheck);
+        return { recovered: true, method: "refresh-token-exchange" };
+      }
+
+      return { recovered: false };
+    } finally {
+      this.isRecovering = false;
+    }
+  }
+
+  /** Reload the browser tab via CDP Page.reload */
+  private reloadTab(wsUrl: string): Promise<void> {
+    return new Promise((resolve) => {
+      const ws = new WebSocket(wsUrl);
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          ws.close();
+          resolve();
+        }
+      }, 10_000);
+
+      ws.addEventListener("open", () => {
+        ws.send(JSON.stringify({ id: 1, method: "Page.reload", params: {} }));
+        // Give the page a moment to start reloading, then resolve
+        setTimeout(() => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timer);
+            ws.close();
+            resolve();
+          }
+        }, 2_000);
+      });
+
+      ws.addEventListener("error", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve();
+        }
+      });
+    });
+  }
+
+  /** Generic CDP evaluate — runs JS in page context and returns typed result. */
+  private evaluateJs<T>(
+    wsUrl: string,
+    expression: string,
+    awaitPromise = false,
+  ): Promise<T | null> {
+    return new Promise((resolve) => {
+      const ws = new WebSocket(wsUrl);
+      let settled = false;
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          ws.close();
+          resolve(null);
+        }
+      }, 15_000);
+
+      ws.addEventListener("open", () => {
+        ws.send(
+          JSON.stringify({
+            id: 1,
+            method: "Runtime.evaluate",
+            params: { expression, returnByValue: true, awaitPromise },
+          }),
+        );
+      });
+
+      ws.addEventListener("message", (event: MessageEvent) => {
+        if (settled) return;
+        try {
+          const msg = JSON.parse(String(event.data)) as {
+            id?: number;
+            result?: { result?: { value?: T | null } };
+          };
+          if (msg.id === 1) {
+            settled = true;
+            clearTimeout(timer);
+            ws.close();
+            resolve(msg.result?.result?.value ?? null);
+          }
+        } catch {
+          // ignore parse errors from other messages
+        }
+      });
+
+      ws.addEventListener("error", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // CDP tab management
+  // ---------------------------------------------------------------------------
 
   /** List CDP targets, find one matching our pageUrlHost, or create a new tab.
    *  Retries CDP connection for up to 90s if the browser isn't running yet. */

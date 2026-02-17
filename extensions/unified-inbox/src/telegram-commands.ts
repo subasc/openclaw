@@ -19,6 +19,7 @@ import {
 // Shared state — set by service.ts after initialization
 let sharedAuth: IMsAuthProvider | null = null;
 let sharedTeamsAuth: IMsAuthProvider | null = null;
+let sharedOutlookRestAuth: IMsAuthProvider | null = null;
 let sharedAuthMode: "browser" | "device-code" = "browser";
 let sharedEmailMonitor: EmailMonitor | null = null;
 let sharedCalendarMonitor: CalendarMonitor | null = null;
@@ -27,6 +28,7 @@ let sharedTeamsChatMonitor: TeamsChatMonitor | null = null;
 export function setCommandDependencies(deps: {
   auth: IMsAuthProvider;
   teamsAuth?: IMsAuthProvider | null;
+  outlookRestAuth?: IMsAuthProvider | null;
   authMode?: "browser" | "device-code";
   emailMonitor?: EmailMonitor;
   calendarMonitor?: CalendarMonitor;
@@ -34,6 +36,7 @@ export function setCommandDependencies(deps: {
 }): void {
   sharedAuth = deps.auth;
   sharedTeamsAuth = deps.teamsAuth ?? null;
+  sharedOutlookRestAuth = deps.outlookRestAuth ?? null;
   sharedAuthMode = deps.authMode ?? "browser";
   sharedEmailMonitor = deps.emailMonitor ?? null;
   sharedCalendarMonitor = deps.calendarMonitor ?? null;
@@ -197,6 +200,71 @@ export function registerInboxCommands(
       } catch (err) {
         return { text: `Failed to send: ${err instanceof Error ? err.message : String(err)}` };
       }
+    },
+  });
+
+  // /refresh_tokens — force re-extract/recover tokens from browser tabs
+  api.registerCommand({
+    name: "refresh_tokens",
+    description: "Force refresh Microsoft 365 tokens",
+    handler: async (_ctx) => {
+      const providers: Array<{ name: string; auth: IMsAuthProvider | null }> = [
+        { name: "Outlook", auth: sharedAuth },
+        { name: "Teams", auth: sharedTeamsAuth },
+        { name: "Outlook-REST", auth: sharedOutlookRestAuth },
+      ];
+
+      const results: string[] = [];
+      for (const { name, auth } of providers) {
+        if (!auth) {
+          results.push(`${name}: not configured`);
+          continue;
+        }
+        if (typeof auth.forceRefresh !== "function") {
+          results.push(`${name}: forceRefresh not supported`);
+          continue;
+        }
+        const ok = await auth.forceRefresh();
+        results.push(`${name}: ${ok ? "refreshed" : "FAILED"}`);
+      }
+
+      // Auto-unpause any paused monitors
+      const monitors = [
+        { name: "Email", monitor: sharedEmailMonitor },
+        { name: "Calendar", monitor: sharedCalendarMonitor },
+        { name: "Teams Chat", monitor: sharedTeamsChatMonitor },
+      ];
+      const unpaused: string[] = [];
+      for (const { name, monitor } of monitors) {
+        if (monitor?.status?.paused) {
+          monitor.status.paused = false;
+          monitor.status.consecutiveFailures = 0;
+          unpaused.push(name);
+        }
+      }
+
+      let text = `Token refresh results:\n${results.join("\n")}`;
+      if (unpaused.length > 0) {
+        text += `\n\nUnpaused monitors: ${unpaused.join(", ")}`;
+      }
+
+      return { text };
+    },
+  });
+
+  // /restart_gateway — restart the OpenClaw gateway remotely
+  api.registerCommand({
+    name: "restart_gateway",
+    description: "Restart the OpenClaw gateway",
+    handler: async (_ctx) => {
+      // Schedule SIGUSR1 restart with a short delay so the response is sent first
+      setTimeout(() => {
+        process.kill(process.pid, "SIGUSR1");
+      }, 1_500);
+
+      return {
+        text: "Gateway restart scheduled. The process will restart in ~2 seconds via SIGUSR1.",
+      };
     },
   });
 

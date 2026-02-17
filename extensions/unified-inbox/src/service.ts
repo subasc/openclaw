@@ -206,13 +206,54 @@ export function createUnifiedInboxService(
       setCommandDependencies({
         auth,
         teamsAuth,
+        outlookRestAuth,
         authMode: cfg.authMode,
         emailMonitor: emailMonitor ?? undefined,
         calendarMonitor: calendarMonitor ?? undefined,
         teamsChatMonitor: teamsChatMonitor ?? undefined,
       });
 
-      // 8. Notify startup
+      // 8. Wire auto-unpause: when tokens recover, unpause paused monitors
+      const wireUnpause = (
+        authProvider: IMsAuthProvider,
+        authName: string,
+        monitors: Array<{ name: string; monitor: EmailMonitor | CalendarMonitor | TeamsChatMonitor | null }>,
+      ) => {
+        if (typeof authProvider.setOnTokenRecovered !== "function") return;
+        authProvider.setOnTokenRecovered(() => {
+          const unpaused: string[] = [];
+          for (const { name, monitor } of monitors) {
+            if (monitor?.status?.paused) {
+              monitor.status.paused = false;
+              monitor.status.consecutiveFailures = 0;
+              unpaused.push(name);
+            }
+          }
+          if (unpaused.length > 0) {
+            log.info(`unified-inbox: ${authName} token recovered — unpaused: ${unpaused.join(", ")}`);
+            sendTelegramMessage({
+              botToken: cfg.telegramBotToken,
+              chatId: cfg.telegramChatId,
+              text: `[Unified Inbox] ${authName} token recovered. Unpaused monitors: ${unpaused.join(", ")}`,
+            }).catch(() => {});
+          }
+        });
+      };
+
+      // mailAuth (Teams token) serves Email + Calendar monitors
+      wireUnpause(mailAuth, "Mail/Calendar", [
+        { name: "Email", monitor: emailMonitor },
+        { name: "Calendar", monitor: calendarMonitor },
+      ]);
+
+      // chatAuth (Outlook token) serves Teams Chat monitor
+      if (chatAuth) {
+        wireUnpause(chatAuth, "Teams Chat", [
+          { name: "Teams Chat", monitor: teamsChatMonitor },
+        ]);
+      }
+
+      // 9. Notify startup
       const monitors = [
         emailMonitor ? "Email" : null,
         calendarMonitor ? "Calendar" : null,
