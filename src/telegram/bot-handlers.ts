@@ -19,6 +19,7 @@ import { writeConfigFile } from "../config/io.js";
 import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
 import { danger, logVerbose, warn } from "../globals.js";
 import { readChannelAllowFromStore } from "../pairing/pairing-store.js";
+import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { resolveAgentRoute } from "../routing/resolve-route.js";
 import { resolveThreadSessionKeys } from "../routing/session-key.js";
 import { withTelegramApiErrorLogging } from "./api-logging.js";
@@ -733,6 +734,25 @@ export const registerTelegramHandlers = ({
         }
 
         return;
+      }
+
+      // Let plugins handle callbacks before falling through to the agent pipeline
+      const hookRunner = getGlobalHookRunner();
+      if (hookRunner?.hasHooks("telegram_callback")) {
+        const hookResult = await hookRunner.runTelegramCallback(
+          {
+            data,
+            chatId,
+            messageId: callbackMessage.message_id,
+            from: callback.from
+              ? { id: callback.from.id, username: callback.from.username }
+              : undefined,
+          },
+          { channelId: "telegram", accountId },
+        );
+        if (hookResult?.handled) {
+          return;
+        }
       }
 
       const syntheticMessage = buildSyntheticTextMessage({

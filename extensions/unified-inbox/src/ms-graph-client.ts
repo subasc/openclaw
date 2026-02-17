@@ -3,12 +3,7 @@
 // Pattern follows extensions/msteams/src/graph.ts fetchGraphJson()
 // ============================================================================
 
-import type {
-  EmailMessage,
-  CalendarEvent,
-  TeamsChat,
-  TeamsChatMessage,
-} from "./types.js";
+import type { EmailMessage, CalendarEvent, TeamsChat, TeamsChatMessage } from "./types.js";
 
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 
@@ -25,9 +20,7 @@ async function fetchGraph<T>(params: {
   body?: unknown;
   headers?: Record<string, string>;
 }): Promise<T> {
-  const url = params.path.startsWith("http")
-    ? params.path
-    : `${GRAPH_ROOT}${params.path}`;
+  const url = params.path.startsWith("http") ? params.path : `${GRAPH_ROOT}${params.path}`;
 
   const res = await fetch(url, {
     method: params.method ?? "GET",
@@ -69,7 +62,7 @@ export async function fetchMailDelta(
     const folder = encodeURIComponent(deltaLinkOrFolder);
     const params = new URLSearchParams({
       $select:
-        "id,conversationId,subject,bodyPreview,from,toRecipients,receivedDateTime,isRead,hasAttachments",
+        "id,conversationId,subject,bodyPreview,body,from,toRecipients,receivedDateTime,isRead,hasAttachments,importance",
       $orderby: "receivedDateTime desc",
       $top: String(opts?.top ?? 10),
     });
@@ -102,11 +95,7 @@ export async function fetchMailDelta(
 }
 
 /** Reply to an email message */
-export async function replyToEmail(
-  token: string,
-  messageId: string,
-  body: string,
-): Promise<void> {
+export async function replyToEmail(token: string, messageId: string, body: string): Promise<void> {
   await fetchGraph<void>({
     token,
     path: `/me/messages/${messageId}/reply`,
@@ -130,9 +119,7 @@ export async function sendMail(
       message: {
         subject: params.subject,
         body: { contentType: "Text", content: params.body },
-        toRecipients: [
-          { emailAddress: { address: params.to } },
-        ],
+        toRecipients: [{ emailAddress: { address: params.to } }],
       },
       saveToSentItems: true,
     },
@@ -140,10 +127,7 @@ export async function sendMail(
 }
 
 /** Mark an email as read */
-export async function markAsRead(
-  token: string,
-  messageId: string,
-): Promise<void> {
+export async function markAsRead(token: string, messageId: string): Promise<void> {
   await fetchGraph<void>({
     token,
     path: `/me/messages/${messageId}`,
@@ -222,11 +206,7 @@ export async function listChatMessages(
 }
 
 /** Send a message in a Teams chat */
-export async function sendChatMessage(
-  token: string,
-  chatId: string,
-  body: string,
-): Promise<void> {
+export async function sendChatMessage(token: string, chatId: string, body: string): Promise<void> {
   await fetchGraph<void>({
     token,
     path: `/me/chats/${chatId}/messages`,
@@ -258,9 +238,7 @@ export async function sendMailViaOutlookRest(
       Message: {
         Subject: params.subject,
         Body: { ContentType: "Text", Content: params.body },
-        ToRecipients: [
-          { EmailAddress: { Address: params.to } },
-        ],
+        ToRecipients: [{ EmailAddress: { Address: params.to } }],
       },
       SaveToSentItems: true,
     }),
@@ -279,6 +257,29 @@ export async function replyToEmailViaOutlookRest(
   body: string,
 ): Promise<void> {
   const res = await fetch(`${OUTLOOK_REST_ROOT}/me/messages/${messageId}/reply`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      Comment: body,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Outlook REST API ${res.status}: ${text.slice(0, 500)}`);
+  }
+}
+
+/** Reply-all to an email via the Outlook REST API */
+export async function replyAllToEmailViaOutlookRest(
+  token: string,
+  messageId: string,
+  body: string,
+): Promise<void> {
+  const res = await fetch(`${OUTLOOK_REST_ROOT}/me/messages/${messageId}/replyall`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,

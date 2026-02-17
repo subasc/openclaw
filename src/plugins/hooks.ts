@@ -32,6 +32,9 @@ import type {
   PluginHookSessionContext,
   PluginHookSessionEndEvent,
   PluginHookSessionStartEvent,
+  PluginHookTelegramCallbackContext,
+  PluginHookTelegramCallbackEvent,
+  PluginHookTelegramCallbackResult,
   PluginHookToolContext,
   PluginHookToolResultPersistContext,
   PluginHookToolResultPersistEvent,
@@ -67,6 +70,9 @@ export type {
   PluginHookGatewayContext,
   PluginHookGatewayStartEvent,
   PluginHookGatewayStopEvent,
+  PluginHookTelegramCallbackEvent,
+  PluginHookTelegramCallbackContext,
+  PluginHookTelegramCallbackResult,
 };
 
 export type HookRunnerLogger = {
@@ -460,6 +466,30 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
   }
 
   // =========================================================================
+  // Telegram Hooks
+  // =========================================================================
+
+  /**
+   * Run telegram_callback hook.
+   * Allows plugins to handle Telegram inline button callbacks before
+   * they reach the agent pipeline. Runs sequentially; first handler
+   * returning { handled: true } stops further processing.
+   */
+  async function runTelegramCallback(
+    event: PluginHookTelegramCallbackEvent,
+    ctx: PluginHookTelegramCallbackContext,
+  ): Promise<PluginHookTelegramCallbackResult | undefined> {
+    return runModifyingHook<"telegram_callback", PluginHookTelegramCallbackResult>(
+      "telegram_callback",
+      event,
+      ctx,
+      (acc, next) => ({
+        handled: next.handled ?? acc?.handled,
+      }),
+    );
+  }
+
+  // =========================================================================
   // Utility
   // =========================================================================
 
@@ -500,6 +530,8 @@ export function createHookRunner(registry: PluginRegistry, options: HookRunnerOp
     // Gateway hooks
     runGatewayStart,
     runGatewayStop,
+    // Telegram hooks
+    runTelegramCallback,
     // Utility
     hasHooks,
     getHookCount,

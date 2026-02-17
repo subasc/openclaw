@@ -2,15 +2,19 @@
 // Teams chat monitor: polls Microsoft Graph for new chat messages
 // ============================================================================
 
-import type { ReplyStore } from "./reply-store.js";
 import type { UnifiedInboxConfig } from "./config.js";
+import type { ReplyStore } from "./reply-store.js";
 import type { MonitorStatus, TeamsChat, TeamsChatMessage, IMsAuthProvider } from "./types.js";
-import { listChats, listChatMessages } from "./ms-graph-client.js";
-import { sendTelegramMessage } from "./telegram-sender.js";
 import { formatTeamsChatNotification, formatTeamsChatPlain } from "./formatters.js";
+import { listChats, listChatMessages } from "./ms-graph-client.js";
 import { pushNotification } from "./notification-store.js";
+import { sendTelegramMessage } from "./telegram-sender.js";
 
-type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+type Logger = {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
+  error: (msg: string) => void;
+};
 
 export class TeamsChatMonitor {
   private interval: ReturnType<typeof setInterval> | null = null;
@@ -43,9 +47,7 @@ export class TeamsChatMonitor {
     try {
       await this.initializeBaseline();
     } catch (err) {
-      this.log.warn(
-        `unified-inbox: teams chat baseline failed: ${String(err)}`,
-      );
+      this.log.warn(`unified-inbox: teams chat baseline failed: ${String(err)}`);
     }
 
     this.interval = setInterval(async () => {
@@ -89,10 +91,7 @@ export class TeamsChatMonitor {
     const chats = await listChats(token);
     for (const chat of chats) {
       if (chat.lastMessagePreview?.createdDateTime) {
-        this.lastMessageTimestamps.set(
-          chat.id,
-          chat.lastMessagePreview.createdDateTime,
-        );
+        this.lastMessageTimestamps.set(chat.id, chat.lastMessagePreview.createdDateTime);
       }
     }
   }
@@ -109,10 +108,7 @@ export class TeamsChatMonitor {
         const previousTimestamp = this.lastMessageTimestamps.get(chat.id);
 
         // Check if there's a new message since last check
-        if (
-          previousTimestamp &&
-          lastPreview.createdDateTime > previousTimestamp
-        ) {
+        if (previousTimestamp && lastPreview.createdDateTime > previousTimestamp) {
           // Fetch new messages
           const messages = await listChatMessages(token, chat.id, {
             since: previousTimestamp,
@@ -131,15 +127,15 @@ export class TeamsChatMonitor {
               continue;
             }
 
+            // Apply smart filtering
+            if (!this.shouldForward(msg, chat)) continue;
+
             await this.forwardToTelegram(msg, chat);
           }
         }
 
         // Update timestamp
-        this.lastMessageTimestamps.set(
-          chat.id,
-          lastPreview.createdDateTime,
-        );
+        this.lastMessageTimestamps.set(chat.id, lastPreview.createdDateTime);
       }
 
       this.status.lastPollAt = Date.now();
@@ -153,9 +149,7 @@ export class TeamsChatMonitor {
 
       if (this.status.consecutiveFailures >= 3) {
         this.status.paused = true;
-        this.log.error(
-          "unified-inbox: teams chat monitor paused after 3 consecutive failures",
-        );
+        this.log.error("unified-inbox: teams chat monitor paused after 3 consecutive failures");
         await sendTelegramMessage({
           botToken: this.cfg.telegramBotToken,
           chatId: this.cfg.telegramChatId,
@@ -165,10 +159,26 @@ export class TeamsChatMonitor {
     }
   }
 
-  private async forwardToTelegram(
-    msg: TeamsChatMessage,
-    chat: TeamsChat,
-  ): Promise<void> {
+  private shouldForward(msg: TeamsChatMessage, chat: TeamsChat): boolean {
+    const filter = this.cfg.teamsChat.filter;
+    if (!filter.enabled) return true;
+
+    // 1. Always deliver 1-to-1 (direct) chats
+    if (chat.chatType === "oneOnOne") return true;
+
+    // 2. Message body mentions configured keywords (e.g. @Subas)
+    if (filter.bodyMentionKeywords.length > 0) {
+      const bodyText = (msg.body?.content ?? "").toLowerCase();
+      const hasMention = filter.bodyMentionKeywords.some((kw) =>
+        bodyText.includes(kw.toLowerCase()),
+      );
+      if (hasMention) return true;
+    }
+
+    return false;
+  }
+
+  private async forwardToTelegram(msg: TeamsChatMessage, chat: TeamsChat): Promise<void> {
     const chatName =
       chat.topic ||
       (chat.chatType === "oneOnOne"

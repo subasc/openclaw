@@ -69,6 +69,45 @@ export function formatEmailNotification(email: EmailMessage): string {
     .join("\n");
 }
 
+export function formatEmailWithSummary(email: EmailMessage, summary: string | undefined): string {
+  const from = email.from?.emailAddress;
+  const fromName = from?.name || from?.address || "Unknown";
+  const fromAddr = from?.address || "";
+  const subject = email.subject || "(no subject)";
+  const time = formatTime(email.receivedDateTime);
+  const attachmentNote = email.hasAttachments ? "\nAttachments: yes" : "";
+
+  const bodySection = summary ? esc(summary) : esc(truncate(email.bodyPreview || "", 500));
+
+  return [
+    `*\\[Email\\]* from *${esc(fromName)}*`,
+    fromAddr ? `${esc(fromAddr)}` : null,
+    `*Subject:* ${esc(subject)}`,
+    `*Time:* ${esc(time)}${attachmentNote}`,
+    `\\-\\-\\-`,
+    bodySection,
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
+}
+
+export function formatDraftPreview(params: {
+  fromName: string;
+  fromAddress: string;
+  subject: string;
+  mode: "reply" | "reply-all";
+  draft: string;
+}): string {
+  const modeLabel = params.mode === "reply-all" ? "Reply All" : "Reply";
+  return [
+    `*\\[Draft \\- ${esc(modeLabel)}\\]*`,
+    `*To:* ${esc(params.fromName)} \\<${esc(params.fromAddress)}\\>`,
+    `*Subject:* Re: ${esc(params.subject)}`,
+    `\\-\\-\\-`,
+    esc(params.draft),
+  ].join("\n");
+}
+
 export function formatEmailListItem(email: EmailMessage, index: number): string {
   const from = email.from?.emailAddress;
   const fromName = from?.name || from?.address || "Unknown";
@@ -87,14 +126,11 @@ export function formatCalendarNotification(event: CalendarEvent): string {
   const endTime = formatTime(event.end.dateTime);
   const location = event.location?.displayName;
   const organizer = event.organizer?.emailAddress?.name;
-  const joinUrl =
-    event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
+  const joinUrl = event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
 
   const lines = [
     `*\\[Calendar\\]* ${esc(event.subject)}`,
-    event.isAllDay
-      ? `*All day*`
-      : `*Time:* ${esc(startTime)} \\- ${esc(endTime)}`,
+    event.isAllDay ? `*All day*` : `*Time:* ${esc(startTime)} \\- ${esc(endTime)}`,
   ];
 
   if (location) lines.push(`*Location:* ${esc(location)}`);
@@ -108,13 +144,9 @@ export function formatCalendarNotification(event: CalendarEvent): string {
   return lines.join("\n");
 }
 
-export function formatCalendarReminder(
-  event: CalendarEvent,
-  minutesBefore: number,
-): string {
+export function formatCalendarReminder(event: CalendarEvent, minutesBefore: number): string {
   const startTime = formatTime(event.start.dateTime);
-  const joinUrl =
-    event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
+  const joinUrl = event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
 
   const lines = [
     `*\\[Reminder\\]* ${esc(event.subject)} starts in *${minutesBefore} min*`,
@@ -129,13 +161,8 @@ export function formatCalendarReminder(
   return lines.join("\n");
 }
 
-export function formatCalendarListItem(
-  event: CalendarEvent,
-  index: number,
-): string {
-  const startTime = event.isAllDay
-    ? "All day"
-    : formatTime(event.start.dateTime);
+export function formatCalendarListItem(event: CalendarEvent, index: number): string {
+  const startTime = event.isAllDay ? "All day" : formatTime(event.start.dateTime);
 
   return `${index + 1}\\. *${esc(event.subject)}* \\- ${esc(startTime)}`;
 }
@@ -144,14 +171,8 @@ export function formatCalendarListItem(
 // Teams chat formatting
 // ============================================================================
 
-export function formatTeamsChatNotification(
-  msg: TeamsChatMessage,
-  chatName: string,
-): string {
-  const sender =
-    msg.from?.user?.displayName ||
-    msg.from?.application?.displayName ||
-    "Unknown";
+export function formatTeamsChatNotification(msg: TeamsChatMessage, chatName: string): string {
+  const sender = msg.from?.user?.displayName || msg.from?.application?.displayName || "Unknown";
 
   // Strip HTML tags from Teams message body
   const bodyText = stripHtml(msg.body?.content || "");
@@ -206,10 +227,7 @@ export function formatEmailPlain(email: EmailMessage): string {
   ].join("\n");
 }
 
-export function formatCalendarReminderPlain(
-  event: CalendarEvent,
-  minutesBefore: number,
-): string {
+export function formatCalendarReminderPlain(event: CalendarEvent, minutesBefore: number): string {
   const startTime = formatTime(event.start.dateTime);
   const location = event.location?.displayName;
   const joinUrl = event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
@@ -228,17 +246,11 @@ export function formatTeamsChatPlain(
   chatName: string,
   chatId?: string,
 ): string {
-  const sender =
-    msg.from?.user?.displayName ||
-    msg.from?.application?.displayName ||
-    "Unknown";
+  const sender = msg.from?.user?.displayName || msg.from?.application?.displayName || "Unknown";
   const bodyText = stripHtml(msg.body?.content || "");
   const time = formatTime(msg.createdDateTime);
 
-  const lines = [
-    `[Teams Chat] ${chatName}`,
-    `${sender} (${time}):`,
-  ];
+  const lines = [`[Teams Chat] ${chatName}`, `${sender} (${time}):`];
   if (chatId) lines.push(`ChatID: ${chatId}`);
   lines.push(truncate(bodyText, 500));
   return lines.join("\n");

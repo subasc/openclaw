@@ -22,6 +22,10 @@ export type UnifiedInboxConfig = {
     filterUnread: boolean;
     folders: string[];
     maxPerPoll: number;
+    filter: {
+      enabled: boolean;
+      bodyMentionKeywords: string[];
+    };
   };
   calendar: {
     enabled: boolean;
@@ -33,6 +37,10 @@ export type UnifiedInboxConfig = {
     enabled: boolean;
     pollIntervalMs: number;
     excludeBotMessages: boolean;
+    filter: {
+      enabled: boolean;
+      bodyMentionKeywords: string[];
+    };
   };
   whatsapp: {
     enabled: boolean;
@@ -67,6 +75,10 @@ const DEFAULTS: UnifiedInboxConfig = {
     filterUnread: true,
     folders: ["Inbox"],
     maxPerPoll: 10,
+    filter: {
+      enabled: true,
+      bodyMentionKeywords: ["@Subas"],
+    },
   },
   calendar: {
     enabled: true,
@@ -78,6 +90,10 @@ const DEFAULTS: UnifiedInboxConfig = {
     enabled: true,
     pollIntervalMs: 15_000,
     excludeBotMessages: true,
+    filter: {
+      enabled: true,
+      bodyMentionKeywords: ["@Subas"],
+    },
   },
   whatsapp: {
     enabled: true,
@@ -100,35 +116,65 @@ export function resolveUnifiedInboxConfig(
 
   return {
     enabled: Boolean(raw.enabled ?? DEFAULTS.enabled),
-    authMode: (raw.authMode === "device-code" ? "device-code" : DEFAULTS.authMode),
+    authMode: raw.authMode === "device-code" ? "device-code" : DEFAULTS.authMode,
     browserProfile: String(raw.browserProfile ?? DEFAULTS.browserProfile),
     browserCdpPort: Number(raw.browserCdpPort ?? DEFAULTS.browserCdpPort),
-    telegramChatId: String(raw.telegramChatId ?? process.env.UNIFIED_INBOX_TELEGRAM_CHAT_ID ?? DEFAULTS.telegramChatId),
-    telegramBotToken: String(raw.telegramBotToken ?? process.env.TELEGRAM_BOT_TOKEN ?? DEFAULTS.telegramBotToken),
+    telegramChatId: String(
+      raw.telegramChatId ?? process.env.UNIFIED_INBOX_TELEGRAM_CHAT_ID ?? DEFAULTS.telegramChatId,
+    ),
+    telegramBotToken: String(
+      raw.telegramBotToken ?? process.env.TELEGRAM_BOT_TOKEN ?? DEFAULTS.telegramBotToken,
+    ),
     telegramAccountId: String(raw.telegramAccountId ?? DEFAULTS.telegramAccountId),
     microsoft: mergeSection(raw.microsoft, DEFAULTS.microsoft, {
       clientId: String,
       tenantId: String,
       tokenFile: String,
     }),
-    email: mergeSection(raw.email, DEFAULTS.email, {
-      enabled: Boolean,
-      pollIntervalMs: Number,
-      filterUnread: Boolean,
-      folders: asStringArray,
-      maxPerPoll: Number,
-    }),
+    email: {
+      ...mergeSection(raw.email, DEFAULTS.email, {
+        enabled: Boolean,
+        pollIntervalMs: Number,
+        filterUnread: Boolean,
+        folders: asStringArray,
+        maxPerPoll: Number,
+        filter: (v: unknown) => v, // handled separately below
+      }),
+      filter: mergeSection(
+        raw.email && typeof raw.email === "object"
+          ? (raw.email as Record<string, unknown>).filter
+          : undefined,
+        DEFAULTS.email.filter,
+        {
+          enabled: Boolean,
+          bodyMentionKeywords: asStringArray,
+        },
+      ),
+    },
     calendar: mergeSection(raw.calendar, DEFAULTS.calendar, {
       enabled: Boolean,
       pollIntervalMs: Number,
       lookAheadMinutes: Number,
       reminderMinutes: asNumberArray,
     }),
-    teamsChat: mergeSection(raw.teamsChat, DEFAULTS.teamsChat, {
-      enabled: Boolean,
-      pollIntervalMs: Number,
-      excludeBotMessages: Boolean,
-    }),
+    teamsChat: {
+      ...mergeSection(raw.teamsChat, DEFAULTS.teamsChat, {
+        enabled: Boolean,
+        pollIntervalMs: Number,
+        excludeBotMessages: Boolean,
+        filter: (v: unknown) => v, // handled separately below
+      }),
+      filter: mergeSection(
+        raw.teamsChat && typeof raw.teamsChat === "object"
+          ? (raw.teamsChat as Record<string, unknown>).filter
+          : undefined,
+        DEFAULTS.teamsChat.filter,
+        {
+          enabled: Boolean,
+          bodyMentionKeywords: asStringArray,
+        },
+      ),
+    },
     whatsapp: mergeSection(raw.whatsapp, DEFAULTS.whatsapp, {
       enabled: Boolean,
       whatsappAccountId: String,

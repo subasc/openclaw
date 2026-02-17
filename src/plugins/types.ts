@@ -312,7 +312,8 @@ export type PluginHookName =
   | "session_start"
   | "session_end"
   | "gateway_start"
-  | "gateway_stop";
+  | "gateway_stop"
+  | "telegram_callback";
 
 // Agent context shared across agent hooks
 export type PluginHookAgentContext = {
@@ -435,6 +436,25 @@ export type PluginHookMessageSentEvent = {
   content: string;
   success: boolean;
   error?: string;
+};
+
+// telegram_callback hook — fires before Telegram inline button callbacks
+// reach the agent pipeline. Plugins can handle callbacks and return { handled: true }
+// to prevent the callback from being processed as a synthetic text message.
+export type PluginHookTelegramCallbackEvent = {
+  data: string;
+  chatId: number;
+  messageId?: number;
+  from?: { id: number; username?: string };
+};
+
+export type PluginHookTelegramCallbackContext = {
+  channelId: "telegram";
+  accountId?: string;
+};
+
+export type PluginHookTelegramCallbackResult = {
+  handled?: boolean;
 };
 
 // Tool context
@@ -587,6 +607,10 @@ export type PluginHookHandlerMap = {
     event: PluginHookGatewayStopEvent,
     ctx: PluginHookGatewayContext,
   ) => Promise<void> | void;
+  telegram_callback: (
+    event: PluginHookTelegramCallbackEvent,
+    ctx: PluginHookTelegramCallbackContext,
+  ) => Promise<PluginHookTelegramCallbackResult | void> | PluginHookTelegramCallbackResult | void;
 };
 
 export type PluginHookRegistration<K extends PluginHookName = PluginHookName> = {

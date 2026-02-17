@@ -3,29 +3,37 @@
 // Manages all monitors, token refresh, and graceful shutdown
 // ============================================================================
 
-import type {
-  OpenClawPluginService,
-  OpenClawPluginServiceContext,
-} from "openclaw/plugin-sdk";
+import type { OpenClawPluginService, OpenClawPluginServiceContext } from "openclaw/plugin-sdk";
 import type { UnifiedInboxConfig } from "./config.js";
 import type { IMsAuthProvider } from "./types.js";
-import { BrowserTokenAuth } from "./browser-token-auth.js";
-import { ReplyStore } from "./reply-store.js";
-import { EmailMonitor } from "./email-monitor.js";
-import { CalendarMonitor } from "./calendar-monitor.js";
-import { TeamsChatMonitor } from "./teams-chat-monitor.js";
-import { setWhatsAppBridgeReplyStore } from "./whatsapp-bridge.js";
-import { setReplyRouterDependencies } from "./reply-router.js";
-import { setCommandDependencies } from "./telegram-commands.js";
 import { setToolAuthProviders } from "./agent-tools.js";
+import { BrowserTokenAuth } from "./browser-token-auth.js";
+import { CalendarMonitor } from "./calendar-monitor.js";
+import { EmailMonitor } from "./email-monitor.js";
+import { ShortIdRegistry, EmailReplyFlow } from "./email-reply-flow.js";
+import { getMe } from "./ms-graph-client.js";
+import { setReplyRouterDependencies } from "./reply-router.js";
+import { ReplyStore } from "./reply-store.js";
+import { TeamsChatMonitor } from "./teams-chat-monitor.js";
+import { setCommandDependencies } from "./telegram-commands.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
+import { setWhatsAppBridgeReplyStore } from "./whatsapp-bridge.js";
 
-type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+type Logger = {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
+  error: (msg: string) => void;
+};
+
+export type UnifiedInboxServiceHandle = {
+  service: OpenClawPluginService;
+  getEmailReplyFlow: () => EmailReplyFlow | null;
+};
 
 export function createUnifiedInboxService(
   cfg: UnifiedInboxConfig,
   log: Logger,
-): OpenClawPluginService {
+): UnifiedInboxServiceHandle {
   let auth: IMsAuthProvider | null = null;
   let teamsAuth: IMsAuthProvider | null = null;
   let outlookRestAuth: IMsAuthProvider | null = null;
@@ -33,8 +41,10 @@ export function createUnifiedInboxService(
   let emailMonitor: EmailMonitor | null = null;
   let calendarMonitor: CalendarMonitor | null = null;
   let teamsChatMonitor: TeamsChatMonitor | null = null;
+  const shortIdRegistry = new ShortIdRegistry();
+  let emailReplyFlow: EmailReplyFlow | null = null;
 
-  return {
+  const service: OpenClawPluginService = {
     id: "unified-inbox",
 
     async start(_ctx: OpenClawPluginServiceContext): Promise<void> {
@@ -49,18 +59,29 @@ export function createUnifiedInboxService(
 
       if (cfg.teamsChat.enabled) {
         teamsAuth = new BrowserTokenAuth(
-          { cdpPort: cfg.browserCdpPort, pageUrl: "https://teams.microsoft.com", pageName: "Teams" },
+          {
+            cdpPort: cfg.browserCdpPort,
+            pageUrl: "https://teams.microsoft.com",
+            pageName: "Teams",
+          },
           log,
         );
       }
 
       // Outlook REST API auth (same tab, different token resource — has Mail.Send scope)
       outlookRestAuth = new BrowserTokenAuth(
-        { cdpPort: cfg.browserCdpPort, pageUrl: "https://outlook.office.com", pageName: "Outlook-REST", resource: "outlook.office.com" },
+        {
+          cdpPort: cfg.browserCdpPort,
+          pageUrl: "https://outlook.office.com",
+          pageName: "Outlook-REST",
+          resource: "outlook.office.com",
+        },
         log,
       );
 
-      log.info("unified-inbox: using CDP token extraction (Outlook" + (teamsAuth ? " + Teams" : "") + ")");
+      log.info(
+        "unified-inbox: using CDP token extraction (Outlook" + (teamsAuth ? " + Teams" : "") + ")",
+      );
 
       // 2. Initialize reply store
       replyStore = new ReplyStore({
@@ -134,13 +155,6 @@ export function createUnifiedInboxService(
       const mailAuth = hasTeamsTokens && teamsAuth ? teamsAuth : auth;
       const chatAuth = hasOutlookTokens ? auth : teamsAuth;
 
-      // Wire reply routing with scope-aware auth
-      setReplyRouterDependencies({
-        auth: mailAuth,           // email replies need Mail.Send (Teams token)
-        teamsAuth: chatAuth,      // Teams replies need Chat.ReadWrite (Outlook token)
-        replyStore,
-      });
-
       // Wire agent tools — use Outlook REST token for sending (has Mail.Send scope)
       const mailSendAuth = hasOutlookRestTokens && outlookRestAuth ? outlookRestAuth : mailAuth;
       setToolAuthProviders({
@@ -149,8 +163,32 @@ export function createUnifiedInboxService(
         log,
       });
 
+      // Create EmailReplyFlow for interactive reply workflow
+      emailReplyFlow = new EmailReplyFlow(cfg, shortIdRegistry, mailSendAuth, mailAuth, log);
+
+      // Wire reply routing with scope-aware auth (after EmailReplyFlow is created)
+      setReplyRouterDependencies({
+        auth: mailAuth, // email replies need Mail.Send (Teams token)
+        teamsAuth: chatAuth, // Teams replies need Chat.ReadWrite (Outlook token)
+        replyStore,
+        emailReplyFlow,
+      });
+
       if (cfg.email.enabled && mailAuth.isAuthenticated()) {
-        emailMonitor = new EmailMonitor(cfg, mailAuth, replyStore, log);
+        // Auto-detect user email for smart filtering (To: field matching)
+        let userEmail: string | undefined;
+        try {
+          const mailToken = await mailAuth.getAccessToken();
+          const profile = await getMe(mailToken);
+          userEmail = profile.mail;
+          log.info(`unified-inbox: user email detected: ${userEmail}`);
+        } catch (err) {
+          log.warn(
+            `unified-inbox: failed to detect user email, filtering by To: disabled: ${String(err)}`,
+          );
+        }
+
+        emailMonitor = new EmailMonitor(cfg, mailAuth, replyStore, shortIdRegistry, log, userEmail);
         await emailMonitor.start();
       }
 
@@ -209,5 +247,10 @@ export function createUnifiedInboxService(
 
       log.info("unified-inbox: service stopped");
     },
+  };
+
+  return {
+    service,
+    getEmailReplyFlow: () => emailReplyFlow,
   };
 }

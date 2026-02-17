@@ -14,6 +14,7 @@ export type EmailMessage = {
   receivedDateTime: string;
   isRead: boolean;
   hasAttachments: boolean;
+  importance?: "low" | "normal" | "high";
 };
 
 /** Microsoft Graph calendar event */
@@ -82,6 +83,9 @@ export type ReplySourceContext =
       conversationId?: string;
       fromAddress: string;
       subject: string;
+      fromName?: string;
+      bodyPreview?: string;
+      toRecipients?: Array<{ name: string; address: string }>;
     }
   | {
       type: "teams-chat";
