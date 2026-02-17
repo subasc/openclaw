@@ -187,7 +187,7 @@ export class TeamsChatMonitor {
     // Push plain text to notification store for AI agent context
     pushNotification({
       source: "teams",
-      text: formatTeamsChatPlain(msg, chatName),
+      text: formatTeamsChatPlain(msg, chatName, chat.id),
       timestamp: Date.now(),
     });
 

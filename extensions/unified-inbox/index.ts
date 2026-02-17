@@ -5,6 +5,12 @@ import { createReplyRouter } from "./src/reply-router.js";
 import { createWhatsAppBridge } from "./src/whatsapp-bridge.js";
 import { registerInboxCommands } from "./src/telegram-commands.js";
 import { formatNotificationsAsContext } from "./src/notification-store.js";
+import {
+  sendEmailTool,
+  replyEmailTool,
+  listTeamsChatsTool,
+  sendTeamsMessageTool,
+} from "./src/agent-tools.js";
 
 const plugin = {
   id: "unified-inbox",
@@ -51,6 +57,12 @@ const plugin = {
 
     // Register Telegram slash commands
     registerInboxCommands(api, cfg);
+
+    // Register agent tools so the AI can send emails and Teams messages
+    api.registerTool(sendEmailTool);
+    api.registerTool(replyEmailTool);
+    api.registerTool(listTeamsChatsTool);
+    api.registerTool(sendTeamsMessageTool);
 
     // Inject recent notifications into AI agent context so it can answer
     // questions about emails, calendar events, and Teams messages

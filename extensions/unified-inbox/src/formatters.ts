@@ -201,6 +201,7 @@ export function formatEmailPlain(email: EmailMessage): string {
     `[Email] From: ${fromName}${fromAddr ? ` <${fromAddr}>` : ""}`,
     `Subject: ${subject}`,
     `Time: ${time}${email.hasAttachments ? " | Attachments: yes" : ""}`,
+    `MessageID: ${email.id}`,
     preview,
   ].join("\n");
 }
@@ -225,6 +226,7 @@ export function formatCalendarReminderPlain(
 export function formatTeamsChatPlain(
   msg: TeamsChatMessage,
   chatName: string,
+  chatId?: string,
 ): string {
   const sender =
     msg.from?.user?.displayName ||
@@ -233,11 +235,13 @@ export function formatTeamsChatPlain(
   const bodyText = stripHtml(msg.body?.content || "");
   const time = formatTime(msg.createdDateTime);
 
-  return [
+  const lines = [
     `[Teams Chat] ${chatName}`,
     `${sender} (${time}):`,
-    truncate(bodyText, 500),
-  ].join("\n");
+  ];
+  if (chatId) lines.push(`ChatID: ${chatId}`);
+  lines.push(truncate(bodyText, 500));
+  return lines.join("\n");
 }
 
 export function formatWhatsAppPlain(msg: WhatsAppInboundMessage): string {

@@ -17,6 +17,7 @@ import { TeamsChatMonitor } from "./teams-chat-monitor.js";
 import { setWhatsAppBridgeReplyStore } from "./whatsapp-bridge.js";
 import { setReplyRouterDependencies } from "./reply-router.js";
 import { setCommandDependencies } from "./telegram-commands.js";
+import { setToolAuthProviders } from "./agent-tools.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
@@ -124,6 +125,13 @@ export function createUnifiedInboxService(
         auth: mailAuth,           // email replies need Mail.Send (Teams token)
         teamsAuth: chatAuth,      // Teams replies need Chat.ReadWrite (Outlook token)
         replyStore,
+      });
+
+      // Wire agent tools with scope-aware auth
+      setToolAuthProviders({
+        mailAuth,                 // email tools need Mail.Send (Teams token)
+        chatAuth: chatAuth!,      // Teams tools need Chat.ReadWrite (Outlook token)
+        log,
       });
 
       if (cfg.email.enabled && mailAuth.isAuthenticated()) {
