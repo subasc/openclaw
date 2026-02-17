@@ -257,13 +257,14 @@ export function registerInboxCommands(
     name: "restart_gateway",
     description: "Restart the OpenClaw gateway",
     handler: async (_ctx) => {
-      // Schedule SIGUSR1 restart with a short delay so the response is sent first
+      // Schedule SIGTERM restart with a short delay so the Telegram response is sent first.
+      // launchd/systemd will auto-restart the process after SIGTERM.
       setTimeout(() => {
-        process.kill(process.pid, "SIGUSR1");
+        process.kill(process.pid, "SIGTERM");
       }, 1_500);
 
       return {
-        text: "Gateway restart scheduled. The process will restart in ~2 seconds via SIGUSR1.",
+        text: "Gateway restart scheduled. The process will terminate in ~2 seconds and auto-restart via launchd.",
       };
     },
   });
