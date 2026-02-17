@@ -38,6 +38,9 @@ const AUTO_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 // Wait for page readiness: poll every 3s for up to 60s
 const PAGE_READY_POLL_MS = 3_000;
 const PAGE_READY_TIMEOUT_MS = 60_000;
+// Wait for CDP port: poll every 5s for up to 90s (browser may start after daemon)
+const CDP_CONNECT_POLL_MS = 5_000;
+const CDP_CONNECT_TIMEOUT_MS = 90_000;
 
 /** JS executed inside the page context to extract the Graph API token from MSAL sessionStorage */
 const EXTRACT_TOKEN_JS = `(() => {
@@ -183,22 +186,42 @@ export class BrowserTokenAuth implements IMsAuthProvider {
     );
   }
 
-  /** List CDP targets, find one matching our pageUrlHost, or create a new tab */
+  /** List CDP targets, find one matching our pageUrlHost, or create a new tab.
+   *  Retries CDP connection for up to 90s if the browser isn't running yet. */
   private async findOrCreateTab(): Promise<string> {
-    const targets = await this.listTargets();
+    const deadline = Date.now() + CDP_CONNECT_TIMEOUT_MS;
+    let lastError: Error | null = null;
 
-    // Look for existing tab
-    const existing = targets.find(
-      (t) => t.type === "page" && t.url.includes(this.pageUrlHost),
-    );
-    if (existing) {
-      return existing.webSocketDebuggerUrl;
+    while (Date.now() < deadline) {
+      try {
+        const targets = await this.listTargets();
+
+        // Look for existing tab
+        const existing = targets.find(
+          (t) => t.type === "page" && t.url.includes(this.pageUrlHost),
+        );
+        if (existing) {
+          return existing.webSocketDebuggerUrl;
+        }
+
+        // No matching tab — create one
+        this.log.info(`unified-inbox: ${this.pageName}: no tab found, creating...`);
+        const created = await this.createTab(this.pageUrl);
+        return created.webSocketDebuggerUrl;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        // Only retry on connection errors (browser not running yet)
+        if (!lastError.message.includes("ECONNREFUSED")) {
+          throw lastError;
+        }
+        this.log.info(
+          `unified-inbox: ${this.pageName}: browser not ready, retrying in ${CDP_CONNECT_POLL_MS / 1000}s...`,
+        );
+        await sleep(CDP_CONNECT_POLL_MS);
+      }
     }
 
-    // No matching tab — create one
-    this.log.info(`unified-inbox: ${this.pageName}: no tab found, creating...`);
-    const created = await this.createTab(this.pageUrl);
-    return created.webSocketDebuggerUrl;
+    throw lastError ?? new Error("CDP connection timed out");
   }
 
   /** GET http://127.0.0.1:{cdpPort}/json — list all CDP targets */
@@ -226,27 +249,28 @@ export class BrowserTokenAuth implements IMsAuthProvider {
     });
   }
 
-  /** GET http://127.0.0.1:{cdpPort}/json/new?{url} — open a new tab */
+  /** PUT http://127.0.0.1:{cdpPort}/json/new?{url} — open a new tab */
   private createTab(url: string): Promise<CdpTarget> {
     return new Promise((resolve, reject) => {
-      http
-        .get(
-          `http://127.0.0.1:${this.cdpPort}/json/new?${encodeURIComponent(url)}`,
-          (res) => {
-            let data = "";
-            res.on("data", (chunk: Buffer) => (data += chunk));
-            res.on("end", () => {
-              try {
-                resolve(JSON.parse(data) as CdpTarget);
-              } catch {
-                reject(new Error("Failed to parse new tab response"));
-              }
-            });
-          },
-        )
-        .on("error", (err) =>
-          reject(new Error(`Failed to create tab: ${err.message}`)),
-        );
+      const req = http.request(
+        `http://127.0.0.1:${this.cdpPort}/json/new?${encodeURIComponent(url)}`,
+        { method: "PUT" },
+        (res) => {
+          let data = "";
+          res.on("data", (chunk: Buffer) => (data += chunk));
+          res.on("end", () => {
+            try {
+              resolve(JSON.parse(data) as CdpTarget);
+            } catch {
+              reject(new Error(`Failed to parse new tab response: ${data}`));
+            }
+          });
+        },
+      );
+      req.on("error", (err) =>
+        reject(new Error(`Failed to create tab: ${err.message}`)),
+      );
+      req.end();
     });
   }
 
