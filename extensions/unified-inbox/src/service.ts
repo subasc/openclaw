@@ -63,15 +63,14 @@ export function createUnifiedInboxService(
       await replyStore.load();
       replyStore.startAutoFlush();
 
-      // 3. Wire up shared dependencies
+      // 3. Wire up shared dependencies (reply routing wired later once we know scopes)
       setWhatsAppBridgeReplyStore(replyStore);
-      setReplyRouterDependencies({ auth, teamsAuth: teamsAuth ?? auth, replyStore });
 
-      // 4. Try loading tokens from browser tabs
-      const hasOutlookTokens = await auth.loadPersistedTokens();
-      const hasTeamsTokens = teamsAuth
-        ? await teamsAuth.loadPersistedTokens().catch(() => false)
-        : false;
+      // 4. Try loading tokens from browser tabs (parallel — share the CDP wait)
+      const [hasOutlookTokens, hasTeamsTokens] = await Promise.all([
+        auth.loadPersistedTokens(),
+        teamsAuth ? teamsAuth.loadPersistedTokens().catch(() => false) : Promise.resolve(false),
+      ]);
 
       if (!hasOutlookTokens && !hasTeamsTokens) {
         log.info(
@@ -83,7 +82,8 @@ export function createUnifiedInboxService(
           text: "[Unified Inbox] Started but no tokens found. Make sure the browser profile is running and you're logged into Microsoft 365.",
         });
 
-        // Still wire up commands so /inbox_status works
+        // Still wire up commands and reply router so /inbox_status works
+        setReplyRouterDependencies({ auth, replyStore });
         setCommandDependencies({ auth, teamsAuth, authMode: cfg.authMode });
         return;
       }
@@ -111,19 +111,33 @@ export function createUnifiedInboxService(
         });
       }
 
-      // 6. Start monitors with their respective auth providers
-      if (cfg.email.enabled && hasOutlookTokens) {
-        emailMonitor = new EmailMonitor(cfg, auth, replyStore, log);
+      // 6. Start monitors with their respective auth providers.
+      // Scopes are counter-intuitive: Outlook's Graph token has Chat.Read (not Mail.Read),
+      // Teams' Graph token has Mail.Read/Calendars.Read (not Chat.Read).
+      // This is because each web app uses its own Substrate API for its primary features
+      // and Graph API only for cross-app features.
+      const mailAuth = hasTeamsTokens && teamsAuth ? teamsAuth : auth;
+      const chatAuth = hasOutlookTokens ? auth : teamsAuth;
+
+      // Wire reply routing with scope-aware auth
+      setReplyRouterDependencies({
+        auth: mailAuth,           // email replies need Mail.Send (Teams token)
+        teamsAuth: chatAuth,      // Teams replies need Chat.ReadWrite (Outlook token)
+        replyStore,
+      });
+
+      if (cfg.email.enabled && mailAuth.isAuthenticated()) {
+        emailMonitor = new EmailMonitor(cfg, mailAuth, replyStore, log);
         await emailMonitor.start();
       }
 
-      if (cfg.calendar.enabled && hasOutlookTokens) {
-        calendarMonitor = new CalendarMonitor(cfg, auth, log);
+      if (cfg.calendar.enabled && mailAuth.isAuthenticated()) {
+        calendarMonitor = new CalendarMonitor(cfg, mailAuth, log);
         await calendarMonitor.start();
       }
 
-      if (cfg.teamsChat.enabled && hasTeamsTokens && teamsAuth) {
-        teamsChatMonitor = new TeamsChatMonitor(cfg, teamsAuth, replyStore, log);
+      if (cfg.teamsChat.enabled && chatAuth?.isAuthenticated()) {
+        teamsChatMonitor = new TeamsChatMonitor(cfg, chatAuth, replyStore, log);
         await teamsChatMonitor.start();
       }
 

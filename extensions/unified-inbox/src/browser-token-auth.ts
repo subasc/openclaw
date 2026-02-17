@@ -38,27 +38,31 @@ const AUTO_REFRESH_INTERVAL_MS = 10 * 60 * 1000;
 // Wait for page readiness: poll every 3s for up to 60s
 const PAGE_READY_POLL_MS = 3_000;
 const PAGE_READY_TIMEOUT_MS = 60_000;
-// Wait for CDP port: poll every 5s for up to 90s (browser may start after daemon)
+// Wait for CDP port: poll every 5s for up to 150s (browser may start well after daemon)
 const CDP_CONNECT_POLL_MS = 5_000;
-const CDP_CONNECT_TIMEOUT_MS = 90_000;
+const CDP_CONNECT_TIMEOUT_MS = 150_000;
 
-/** JS executed inside the page context to extract the Graph API token from MSAL sessionStorage */
+/** JS executed inside the page context to extract the Graph API token from MSAL cache.
+ *  MSAL v2 stores tokens in localStorage (not sessionStorage) on Outlook/Teams web. */
 const EXTRACT_TOKEN_JS = `(() => {
-  for (const key of Object.keys(sessionStorage)) {
-    if (!key.includes('accesstoken')) continue;
-    try {
-      const entry = JSON.parse(sessionStorage.getItem(key));
-      if (!entry || !entry.secret) continue;
-      if (key.toLowerCase().includes('graph.microsoft.com')) {
-        return { token: entry.secret, expiresOn: Number(entry.expiresOn) || 0, target: entry.target || '' };
-      }
-    } catch {}
+  const stores = [localStorage, sessionStorage];
+  for (const store of stores) {
+    for (const key of Object.keys(store)) {
+      if (!key.toLowerCase().includes('accesstoken')) continue;
+      try {
+        const entry = JSON.parse(store.getItem(key));
+        if (!entry || !entry.secret) continue;
+        if (key.toLowerCase().includes('graph.microsoft.com')) {
+          return { token: entry.secret, expiresOn: Number(entry.expires_on || entry.expiresOn) || 0, target: entry.target || '' };
+        }
+      } catch {}
+    }
   }
   return null;
 })()`;
 
 /**
- * Extracts Graph API tokens directly from MSAL sessionStorage in a live
+ * Extracts Graph API tokens directly from MSAL token cache in a live
  * Microsoft web app tab (Outlook, Teams, etc.) via Chrome DevTools Protocol.
  *
  * No OAuth dialogs, no client IDs, no admin consent needed — uses tokens
