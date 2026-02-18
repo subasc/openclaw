@@ -48,9 +48,14 @@ const plugin = {
     api.on("message_received", replyRouter.handleMessageReceived);
 
     // Register WhatsApp bridge hook (forwards WhatsApp messages to Telegram)
+    // Gated through the registry so /bot_stop whatsapp actually stops forwarding
     if (cfg.whatsapp.enabled) {
       const whatsappBridge = createWhatsAppBridge(cfg, api.logger);
-      api.on("message_received", whatsappBridge.handleMessageReceived);
+      api.on("message_received", (event, ctx) => {
+        const waBot = serviceHandle.getRegistry()?.get("whatsapp");
+        if (waBot && !waBot.status.running) return;
+        return whatsappBridge.handleMessageReceived(event, ctx);
+      });
     }
 
     // Register Telegram slash commands

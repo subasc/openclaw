@@ -10,6 +10,7 @@ import type { MsAuthBrowser } from "./ms-auth-browser.js";
 import type { EmailMonitor } from "./email-monitor.js";
 import type { CalendarMonitor } from "./calendar-monitor.js";
 import type { TeamsChatMonitor } from "./teams-chat-monitor.js";
+import type { SubBotRegistry } from "./sub-bot-registry.js";
 import { fetchMailDelta, sendMail } from "./ms-graph-client.js";
 import {
   formatEmailListItem,
@@ -24,6 +25,7 @@ let sharedAuthMode: "browser" | "device-code" = "browser";
 let sharedEmailMonitor: EmailMonitor | null = null;
 let sharedCalendarMonitor: CalendarMonitor | null = null;
 let sharedTeamsChatMonitor: TeamsChatMonitor | null = null;
+let sharedRegistry: SubBotRegistry | null = null;
 
 export function setCommandDependencies(deps: {
   auth: IMsAuthProvider;
@@ -33,6 +35,7 @@ export function setCommandDependencies(deps: {
   emailMonitor?: EmailMonitor;
   calendarMonitor?: CalendarMonitor;
   teamsChatMonitor?: TeamsChatMonitor;
+  registry?: SubBotRegistry;
 }): void {
   sharedAuth = deps.auth;
   sharedTeamsAuth = deps.teamsAuth ?? null;
@@ -41,6 +44,7 @@ export function setCommandDependencies(deps: {
   sharedEmailMonitor = deps.emailMonitor ?? null;
   sharedCalendarMonitor = deps.calendarMonitor ?? null;
   sharedTeamsChatMonitor = deps.teamsChatMonitor ?? null;
+  sharedRegistry = deps.registry ?? null;
 }
 
 export function registerInboxCommands(
@@ -203,6 +207,79 @@ export function registerInboxCommands(
     },
   });
 
+  // /bots — list all sub-bots and their status
+  api.registerCommand({
+    name: "bots",
+    description: "List all sub-bots and their status",
+    handler: async (_ctx) => {
+      if (!sharedRegistry) {
+        return { text: "Sub-bot registry not initialized." };
+      }
+      const bots = sharedRegistry.getAll();
+      if (bots.length === 0) {
+        return { text: "No sub-bots registered." };
+      }
+      return { text: sharedRegistry.formatStatusSummary() };
+    },
+  });
+
+  // /bot_start <id> — start a stopped sub-bot
+  api.registerCommand({
+    name: "bot_start",
+    description: "Start a sub-bot: /bot_start <id>",
+    acceptsArgs: true,
+    handler: async (ctx) => {
+      if (!sharedRegistry) {
+        return { text: "Sub-bot registry not initialized." };
+      }
+      const id = ctx.args?.trim();
+      if (!id) {
+        const ids = sharedRegistry.getAll().map((b) => b.id).join(", ");
+        return { text: `Usage: /bot_start <id>\nAvailable: ${ids}` };
+      }
+      const result = await sharedRegistry.startBot(id);
+      return { text: result };
+    },
+  });
+
+  // /bot_stop <id> — stop a running sub-bot
+  api.registerCommand({
+    name: "bot_stop",
+    description: "Stop a sub-bot: /bot_stop <id>",
+    acceptsArgs: true,
+    handler: async (ctx) => {
+      if (!sharedRegistry) {
+        return { text: "Sub-bot registry not initialized." };
+      }
+      const id = ctx.args?.trim();
+      if (!id) {
+        const ids = sharedRegistry.getAll().map((b) => b.id).join(", ");
+        return { text: `Usage: /bot_stop <id>\nAvailable: ${ids}` };
+      }
+      const result = sharedRegistry.stopBot(id);
+      return { text: result };
+    },
+  });
+
+  // /bot_restart <id> — restart a sub-bot
+  api.registerCommand({
+    name: "bot_restart",
+    description: "Restart a sub-bot: /bot_restart <id>",
+    acceptsArgs: true,
+    handler: async (ctx) => {
+      if (!sharedRegistry) {
+        return { text: "Sub-bot registry not initialized." };
+      }
+      const id = ctx.args?.trim();
+      if (!id) {
+        const ids = sharedRegistry.getAll().map((b) => b.id).join(", ");
+        return { text: `Usage: /bot_restart <id>\nAvailable: ${ids}` };
+      }
+      const result = await sharedRegistry.restartBot(id);
+      return { text: result };
+    },
+  });
+
   // /refresh_tokens — force re-extract/recover tokens from browser tabs
   api.registerCommand({
     name: "refresh_tokens",
@@ -294,6 +371,18 @@ export function registerInboxCommands(
       const outlookAuth = sharedAuth?.isAuthenticated() ?? false;
       const teamsAuth = sharedTeamsAuth?.isAuthenticated() ?? false;
 
+      const authLines = [
+        `Auth mode: CDP token extraction`,
+        `Outlook auth: ${outlookAuth ? "yes" : "NO"}`,
+        `Teams auth: ${teamsAuth ? "yes" : "NO"}`,
+        "",
+      ];
+
+      // Use registry summary when available, fallback to per-monitor formatting
+      if (sharedRegistry) {
+        return { text: authLines.join("\n") + sharedRegistry.formatStatusSummary() };
+      }
+
       const formatStatus = (name: string, status: { running: boolean; paused: boolean; lastPollAt: number | null; lastError: string | null } | null): string => {
         if (!status) return `${name}: not configured`;
         const state = status.paused
@@ -311,10 +400,7 @@ export function registerInboxCommands(
       };
 
       const lines = [
-        `Auth mode: CDP token extraction`,
-        `Outlook auth: ${outlookAuth ? "yes" : "NO"}`,
-        `Teams auth: ${teamsAuth ? "yes" : "NO"}`,
-        "",
+        ...authLines,
         formatStatus("Email", sharedEmailMonitor?.status ?? null),
         formatStatus("Calendar", sharedCalendarMonitor?.status ?? null),
         formatStatus("Teams Chat", sharedTeamsChatMonitor?.status ?? null),
