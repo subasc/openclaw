@@ -193,14 +193,17 @@ export async function listChatMessages(
     $top: String(opts?.top ?? 20),
     $orderby: "createdDateTime desc",
   });
-  if (opts?.since) {
-    params.set("$filter", `createdDateTime gt ${opts.since}`);
-  }
 
   const res = await fetchGraph<GraphListResponse<TeamsChatMessage>>({
     token,
     path: `/me/chats/${chatId}/messages?${params}`,
   });
+
+  // Graph API doesn't support $filter on createdDateTime for chat messages,
+  // so filter client-side instead.
+  if (opts?.since) {
+    return res.value.filter((msg) => msg.createdDateTime > opts.since!);
+  }
 
   return res.value;
 }
