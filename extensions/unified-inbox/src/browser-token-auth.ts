@@ -6,6 +6,8 @@
 // Includes automatic token recovery when tokens expire:
 //   Phase 1: Clear stale MSAL cache → reload browser tab → poll for fresh token
 //   Phase 2: Use refresh token + Azure AD /oauth2/v2.0/token to acquire new token
+//   Phase 3: Intercept Bearer token from live page requests via CDP Fetch domain
+//            (handles MSAL v4 encrypted cache where localStorage entries are AES-GCM encrypted)
 // ============================================================================
 
 import http from "node:http";
@@ -51,6 +53,8 @@ const CDP_CONNECT_TIMEOUT_MS = 150_000;
 // Recovery: poll every 3s for up to 30s after clearing stale tokens + reload
 const RECOVERY_POLL_MS = 3_000;
 const RECOVERY_POLL_TIMEOUT_MS = 30_000;
+// Fetch intercept: wait up to 15s for a Bearer token from live page requests
+const FETCH_INTERCEPT_TIMEOUT_MS = 15_000;
 
 // ---------------------------------------------------------------------------
 // JS builders — generate code to evaluate in browser context via CDP
@@ -94,6 +98,25 @@ function buildClearStaleTokensJs(resource: string): string {
     } catch {}
   }
   return { cleared };
+})()`;
+}
+
+/** Build JS to click on a mail/chat item and dispatch focus events to trigger API calls. */
+function buildTriggerPageActivityJs(): string {
+  return `(() => {
+  // Try clicking on a mail/chat item to trigger a Graph API call
+  const selectors = ['[data-convid]', '[role="option"]', '[role="listitem"] [role="row"]', '[role="row"]'];
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el) {
+      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return { clicked: sel };
+    }
+  }
+  // Fallback: dispatch focus + visibilitychange to nudge background fetches
+  window.dispatchEvent(new Event('focus'));
+  document.dispatchEvent(new Event('visibilitychange'));
+  return { clicked: null, fallback: true };
 })()`;
 }
 
@@ -206,6 +229,25 @@ function isTokenFresh(expiresOn: number): boolean {
   return expiresOn * 1000 > Date.now() + REFRESH_BUFFER_MS;
 }
 
+/** Decode JWT payload (base64url → JSON) to extract exp and scp claims.
+ *  No signature verification — we trust the browser's own tokens. */
+function decodeJwtClaims(token: string): { exp: number; scp: string } | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    // base64url → base64 → decode
+    const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = Buffer.from(payload, "base64").toString("utf-8");
+    const claims = JSON.parse(json) as { exp?: number; scp?: string };
+    return {
+      exp: claims.exp ?? 0,
+      scp: claims.scp ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // BrowserTokenAuth
 // ---------------------------------------------------------------------------
@@ -220,6 +262,7 @@ function isTokenFresh(expiresOn: number): boolean {
  * When tokens expire, automatic recovery kicks in:
  *   Phase 1: Clear stale MSAL entries → reload tab → poll for fresh token
  *   Phase 2: Use refresh token to call Azure AD directly → store result in MSAL format
+ *   Phase 3: Intercept Bearer token from live page requests via CDP Fetch domain
  */
 export class BrowserTokenAuth implements IMsAuthProvider {
   private cachedToken: string | null = null;
@@ -387,6 +430,23 @@ export class BrowserTokenAuth implements IMsAuthProvider {
       return;
     }
 
+    // No token in localStorage/sessionStorage — try Fetch intercept before
+    // entering the slow polling loop. This handles MSAL v4 encrypted cache
+    // where the page is already loaded and making authenticated API calls.
+    this.log.info(
+      `unified-inbox: ${this.pageName}: no token in storage, trying request intercept...`,
+    );
+    const intercepted = await this.extractTokenViaFetchIntercept(wsUrl);
+    if (intercepted) {
+      if (isTokenFresh(intercepted.expiresOn)) {
+        this.applyToken(intercepted);
+        return;
+      }
+      // Intercepted but expired — apply as fallback
+      this.applyToken(intercepted);
+      return;
+    }
+
     // No token found — page may need time to load, poll until ready
     this.log.info(`unified-inbox: ${this.pageName}: waiting for page to load...`);
     const deadline = Date.now() + PAGE_READY_TIMEOUT_MS;
@@ -457,7 +517,8 @@ export class BrowserTokenAuth implements IMsAuthProvider {
 
   /** Full recovery pipeline:
    *  Phase 1: Clear stale tokens → reload tab → poll 30s for fresh token
-   *  Phase 2: Use refresh token via Azure AD to acquire a new token directly */
+   *  Phase 2: Use refresh token via Azure AD to acquire a new token directly
+   *  Phase 3: Intercept Bearer token from live page requests via CDP Fetch domain */
   private async attemptRecovery(
     wsUrl: string,
   ): Promise<{ recovered: boolean; method?: string }> {
@@ -529,6 +590,18 @@ export class BrowserTokenAuth implements IMsAuthProvider {
       if (finalCheck && isTokenFresh(finalCheck.expiresOn)) {
         this.applyToken(finalCheck);
         return { recovered: true, method: "refresh-token-exchange" };
+      }
+
+      // --- Phase 3: Intercept Bearer token from live page requests ---
+      // When MSAL v4 encrypts the cache, the page is still functional
+      // and making authenticated API calls — we just intercept one.
+      this.log.info(
+        `unified-inbox: ${this.pageName}: recovery phase 3 — intercepting Bearer token via CDP Fetch domain`,
+      );
+      const intercepted = await this.extractTokenViaFetchIntercept(wsUrl);
+      if (intercepted && isTokenFresh(intercepted.expiresOn)) {
+        this.applyToken(intercepted);
+        return { recovered: true, method: "request-intercept" };
       }
 
       return { recovered: false };
@@ -765,6 +838,132 @@ export class BrowserTokenAuth implements IMsAuthProvider {
           }
         } catch {
           // ignore parse errors from other messages
+        }
+      });
+
+      ws.addEventListener("error", () => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          resolve(null);
+        }
+      });
+    });
+  }
+
+  /** Intercept outgoing HTTP requests via CDP Fetch domain to capture Bearer tokens.
+   *  Used when MSAL v4 encrypts the localStorage cache but the page is functional. */
+  private extractTokenViaFetchIntercept(wsUrl: string): Promise<ExtractedToken | null> {
+    return new Promise((resolve) => {
+      const ws = new WebSocket(wsUrl);
+      let settled = false;
+      let msgId = 1;
+
+      const timer = setTimeout(() => {
+        if (!settled) {
+          settled = true;
+          // Best-effort: disable Fetch domain before closing
+          ws.send(JSON.stringify({ id: msgId++, method: "Fetch.disable", params: {} }));
+          setTimeout(() => ws.close(), 500);
+          this.log.warn(
+            `unified-inbox: ${this.pageName}: fetch intercept timed out after ${FETCH_INTERCEPT_TIMEOUT_MS / 1000}s`,
+          );
+          resolve(null);
+        }
+      }, FETCH_INTERCEPT_TIMEOUT_MS);
+
+      const finish = (token: ExtractedToken | null) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        // Disable Fetch domain before closing
+        ws.send(JSON.stringify({ id: msgId++, method: "Fetch.disable", params: {} }));
+        setTimeout(() => ws.close(), 500);
+        resolve(token);
+      };
+
+      ws.addEventListener("open", () => {
+        // Enable Fetch intercept for Graph API requests
+        const enableId = msgId++;
+        ws.send(
+          JSON.stringify({
+            id: enableId,
+            method: "Fetch.enable",
+            params: {
+              patterns: [
+                { urlPattern: `*${this.resource}*`, requestStage: "Request" },
+              ],
+            },
+          }),
+        );
+
+        // After Fetch is enabled, inject JS to trigger page activity
+        setTimeout(() => {
+          if (settled) return;
+          const triggerId = msgId++;
+          ws.send(
+            JSON.stringify({
+              id: triggerId,
+              method: "Runtime.evaluate",
+              params: {
+                expression: buildTriggerPageActivityJs(),
+                returnByValue: true,
+                awaitPromise: false,
+              },
+            }),
+          );
+        }, 500);
+      });
+
+      ws.addEventListener("message", (event: MessageEvent) => {
+        if (settled) return;
+        try {
+          const msg = JSON.parse(String(event.data)) as {
+            id?: number;
+            method?: string;
+            params?: {
+              requestId?: string;
+              request?: {
+                url?: string;
+                headers?: Record<string, string>;
+              };
+            };
+          };
+
+          // Handle Fetch.requestPaused events
+          if (msg.method === "Fetch.requestPaused" && msg.params?.requestId) {
+            const headers = msg.params.request?.headers ?? {};
+
+            // Continue the request immediately so it doesn't hang
+            ws.send(
+              JSON.stringify({
+                id: msgId++,
+                method: "Fetch.continueRequest",
+                params: { requestId: msg.params.requestId },
+              }),
+            );
+
+            // Check for Authorization: Bearer header
+            const authHeader =
+              headers["Authorization"] ?? headers["authorization"] ?? "";
+            if (authHeader.startsWith("Bearer ") && authHeader.length > 50) {
+              const bearerToken = authHeader.slice(7);
+              const claims = decodeJwtClaims(bearerToken);
+              if (claims) {
+                this.log.info(
+                  `unified-inbox: ${this.pageName}: token extracted via request-intercept`,
+                );
+                finish({
+                  token: bearerToken,
+                  expiresOn: claims.exp,
+                  target: claims.scp,
+                });
+                return;
+              }
+            }
+          }
+        } catch {
+          // ignore parse errors
         }
       });
 
