@@ -14,7 +14,7 @@ export const DEFAULT_LOG_FILE = path.join(DEFAULT_LOG_DIR, "openclaw.log"); // l
 
 const LOG_PREFIX = "openclaw";
 const LOG_SUFFIX = ".log";
-const MAX_LOG_AGE_MS = 24 * 60 * 60 * 1000; // 24h
+const MAX_LOG_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
 
 const requireConfig = createRequire(import.meta.url);
 

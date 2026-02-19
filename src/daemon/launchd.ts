@@ -52,6 +52,24 @@ export function resolveGatewayLogPaths(env: Record<string, string | undefined>):
   };
 }
 
+const GATEWAY_LOG_MAX_AGE_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+/** Truncate gateway log files that are older than 3 days. */
+export async function pruneGatewayLogs(env: Record<string, string | undefined>): Promise<void> {
+  const { stdoutPath, stderrPath } = resolveGatewayLogPaths(env);
+  const cutoff = Date.now() - GATEWAY_LOG_MAX_AGE_MS;
+  for (const logPath of [stdoutPath, stderrPath]) {
+    try {
+      const stat = await fs.stat(logPath);
+      if (stat.mtimeMs < cutoff) {
+        await fs.truncate(logPath, 0);
+      }
+    } catch {
+      // file may not exist yet
+    }
+  }
+}
+
 export async function readLaunchAgentProgramArguments(
   env: Record<string, string | undefined>,
 ): Promise<{
@@ -367,6 +385,7 @@ export async function installLaunchAgent({
 }): Promise<{ plistPath: string }> {
   const { logDir, stdoutPath, stderrPath } = resolveGatewayLogPaths(env);
   await fs.mkdir(logDir, { recursive: true });
+  await pruneGatewayLogs(env);
 
   const domain = resolveGuiDomain();
   const label = resolveLaunchAgentLabel({ env });
