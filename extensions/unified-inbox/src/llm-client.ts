@@ -92,16 +92,18 @@ export async function draftReply(
     bodyPreview: string;
     mode: "reply" | "reply-all";
     notes: string;
+    senderName: string;
   },
   log?: Logger,
 ): Promise<string | undefined> {
   const modeLabel = params.mode === "reply-all" ? "reply-all" : "reply";
 
   const systemPrompt = [
-    `Draft a professional ${modeLabel} to this email.`,
-    "Output ONLY the email body text. Professional tone, proper grammar, no typos.",
-    "Do not include subject line, greeting headers like 'Subject:', or email metadata.",
-    "Just write the reply body that will be sent.",
+    `You are ${params.senderName}, writing a ${modeLabel} to an email.`,
+    "Write naturally — like a real person, not a template. Keep it warm but professional.",
+    "Match the tone of the original email. Be concise, no fluff.",
+    "Output ONLY the email body text. No subject line, no headers, no metadata.",
+    `Sign off with:\nRegards,\n${params.senderName}`,
   ].join("\n");
 
   const userContent = [
@@ -109,7 +111,7 @@ export async function draftReply(
     `Subject: ${params.subject}`,
     `Preview: ${params.bodyPreview}`,
     `Mode: ${modeLabel}`,
-    `User's notes/bullet points: ${params.notes}`,
+    `My notes/intent: ${params.notes}`,
   ].join("\n");
 
   return chatCompletion(systemPrompt, userContent, log);

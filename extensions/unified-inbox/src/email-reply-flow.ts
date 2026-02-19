@@ -93,6 +93,8 @@ export class EmailReplyFlow {
   private suppressNextReply = false;
   private timeoutTimer: ReturnType<typeof setTimeout> | null = null;
 
+  private senderName = "Subas";
+
   constructor(
     private cfg: UnifiedInboxConfig,
     private registry: ShortIdRegistry,
@@ -100,6 +102,11 @@ export class EmailReplyFlow {
     private mailReadAuth: IMsAuthProvider,
     private log: Logger,
   ) {}
+
+  /** Set the display name used for email sign-offs (e.g. "Regards, Subas") */
+  setSenderName(name: string): void {
+    this.senderName = name;
+  }
 
   // ---------- Public API for hooks ----------
 
@@ -209,6 +216,7 @@ export class EmailReplyFlow {
         bodyPreview: ctx.bodyPreview,
         mode,
         notes,
+        senderName: this.senderName,
       },
       this.log,
     );

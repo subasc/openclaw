@@ -202,6 +202,9 @@ export function createUnifiedInboxService(
           const mailToken = await mailAuth.getAccessToken();
           const profile = await getMe(mailToken);
           userEmail = profile.mail;
+          if (profile.displayName) {
+            emailReplyFlow.setSenderName(profile.displayName);
+          }
           log.info(`unified-inbox: user email detected: ${userEmail}`);
         } catch (err) {
           log.warn(
