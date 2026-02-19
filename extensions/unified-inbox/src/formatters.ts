@@ -199,6 +199,15 @@ export function formatWhatsAppNotification(msg: WhatsAppInboundMessage): string 
     lines[0] += ` in *${esc(msg.groupName)}*`;
   }
 
+  // Include sender's phone number so the agent can reply directly
+  const senderNumber = jidToE164(msg.from);
+  if (senderNumber) {
+    lines.push(`*From:* ${esc(senderNumber)}`);
+  }
+  if (msg.groupName && msg.groupJid) {
+    lines.push(`*Group:* ${esc(msg.groupJid)}`);
+  }
+
   lines.push(esc(truncate(msg.content, 500)));
   lines.push(``);
   lines.push(`_Reply to this message to respond on WhatsApp_`);
@@ -258,13 +267,23 @@ export function formatTeamsChatPlain(
 
 export function formatWhatsAppPlain(msg: WhatsAppInboundMessage): string {
   const sender = msg.senderName || msg.from || "Unknown";
+  const senderNumber = jidToE164(msg.from);
   const group = msg.groupName ? ` in ${msg.groupName}` : "";
-  return `[WhatsApp] ${sender}${group}: ${truncate(msg.content, 500)}`;
+  const numberPart = senderNumber ? ` (${senderNumber})` : "";
+  const groupJidPart = msg.groupName && msg.groupJid ? ` [GroupJID: ${msg.groupJid}]` : "";
+  return `[WhatsApp] ${sender}${numberPart}${group}${groupJidPart}: ${truncate(msg.content, 500)}`;
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/** Extract E.164 phone number from a WhatsApp JID (e.g., "60123456789@s.whatsapp.net" -> "+60123456789") */
+function jidToE164(jid: string | undefined): string | null {
+  if (!jid) return null;
+  const match = jid.match(/^(\d+)@s\.whatsapp\.net$/);
+  return match ? `+${match[1]}` : null;
+}
 
 /** Strip HTML tags from a string */
 function stripHtml(html: string): string {

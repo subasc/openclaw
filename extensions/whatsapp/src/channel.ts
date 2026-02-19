@@ -247,7 +247,7 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
         return [];
       }
       const gate = createActionGate(cfg.channels.whatsapp.actions);
-      const actions = new Set<ChannelMessageActionName>();
+      const actions = new Set<ChannelMessageActionName>(["send"]);
       if (gate("reactions")) {
         actions.add("react");
       }
@@ -256,8 +256,33 @@ export const whatsappPlugin: ChannelPlugin<ResolvedWhatsAppAccount> = {
       }
       return Array.from(actions);
     },
-    supportsAction: ({ action }) => action === "react",
+    supportsAction: ({ action }) => action === "send" || action === "react" || action === "poll",
     handleAction: async ({ action, params, cfg, accountId }) => {
+      if (action === "send") {
+        const to = readStringParam(params, "to", { required: true });
+        const message = readStringParam(params, "message", { allowEmpty: true });
+        const mediaUrl = readStringParam(params, "media", { trim: false });
+        const gifPlayback = typeof params.gifPlayback === "boolean" ? params.gifPlayback : undefined;
+        const send = getWhatsAppRuntime().channel.whatsapp.sendMessageWhatsApp;
+        const result = await send(to, message || "", {
+          verbose: false,
+          mediaUrl: mediaUrl ?? undefined,
+          accountId: accountId ?? undefined,
+          gifPlayback,
+        });
+        return { channel: "whatsapp", ...result };
+      }
+      if (action === "poll") {
+        const to = readStringParam(params, "to", { required: true });
+        const pollQuestion = readStringParam(params, "pollQuestion", { required: true });
+        const pollOptions = Array.isArray(params.pollOption) ? params.pollOption.map(String) : [];
+        const result = await getWhatsAppRuntime().channel.whatsapp.sendPollWhatsApp(
+          to,
+          { question: pollQuestion, options: pollOptions },
+          { verbose: false, accountId: accountId ?? undefined },
+        );
+        return { channel: "whatsapp", ...result };
+      }
       if (action !== "react") {
         throw new Error(`Action ${action} is not supported for provider ${meta.id}.`);
       }
