@@ -596,6 +596,64 @@ export function findChromeExecutableWindows(): BrowserExecutable | null {
   return findFirstExecutable(candidates);
 }
 
+/**
+ * Find a Chrome for Testing binary installed under the given base directory.
+ * CfT supports --load-extension which branded Chrome (v137+) blocks.
+ */
+export function findChromeForTesting(baseDir: string): BrowserExecutable | null {
+  const chromeDir = path.join(baseDir, "chrome");
+  if (!exists(chromeDir)) {
+    return null;
+  }
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(chromeDir);
+  } catch {
+    return null;
+  }
+
+  // macOS arm64: mac_arm-{version}/chrome-mac-arm64/Google Chrome for Testing.app/...
+  for (const entry of entries) {
+    if (entry.startsWith("mac_arm-") || entry.startsWith("mac-arm64-")) {
+      const bin = path.join(
+        chromeDir,
+        entry,
+        "chrome-mac-arm64",
+        "Google Chrome for Testing.app",
+        "Contents",
+        "MacOS",
+        "Google Chrome for Testing",
+      );
+      if (exists(bin)) {
+        return { kind: "chrome", path: bin };
+      }
+    }
+    // macOS x86_64: mac-x64-{version}/chrome-mac-x64/...
+    if (entry.startsWith("mac-x64-") || entry.startsWith("mac_x64-")) {
+      const bin = path.join(
+        chromeDir,
+        entry,
+        "chrome-mac-x64",
+        "Google Chrome for Testing.app",
+        "Contents",
+        "MacOS",
+        "Google Chrome for Testing",
+      );
+      if (exists(bin)) {
+        return { kind: "chrome", path: bin };
+      }
+    }
+    // Linux: linux64-{version}/chrome-linux64/chrome
+    if (entry.startsWith("linux")) {
+      const bin = path.join(chromeDir, entry, "chrome-linux64", "chrome");
+      if (exists(bin)) {
+        return { kind: "chrome", path: bin };
+      }
+    }
+  }
+  return null;
+}
+
 export function resolveBrowserExecutableForPlatform(
   resolved: ResolvedBrowserConfig,
   platform: NodeJS.Platform,

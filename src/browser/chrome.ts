@@ -3,7 +3,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
+import {
+  installChromeExtension,
+  resolveBundledExtensionRootDir,
+} from "../cli/browser-cli-extension.js";
 import type { ResolvedBrowserConfig, ResolvedBrowserProfile } from "./config.js";
+import { resolveStateDir } from "../config/paths.js";
 import { ensurePortAvailable } from "../infra/ports.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { CONFIG_DIR } from "../utils.js";
@@ -11,6 +16,7 @@ import { appendCdpPath } from "./cdp.helpers.js";
 import { getHeadersWithAuth, normalizeCdpWsUrl } from "./cdp.js";
 import {
   type BrowserExecutable,
+  findChromeForTesting,
   resolveBrowserExecutableForPlatform,
 } from "./chrome.executables.js";
 import {
@@ -43,6 +49,33 @@ function exists(filePath: string) {
     return fs.existsSync(filePath);
   } catch {
     return false;
+  }
+}
+
+/**
+ * Resolve the path to the Browser Relay extension for auto-loading via --load-extension.
+ * Auto-installs from bundled assets if not already installed.
+ * Returns null if unavailable (graceful degradation).
+ */
+async function resolveAutoLoadExtensionPath(): Promise<string | null> {
+  const installed = path.join(resolveStateDir(), "browser", "chrome-extension");
+  if (fs.existsSync(path.join(installed, "manifest.json"))) {
+    return installed;
+  }
+
+  // Not installed yet — try auto-installing from bundled assets.
+  try {
+    const bundled = resolveBundledExtensionRootDir();
+    if (!fs.existsSync(path.join(bundled, "manifest.json"))) {
+      return null;
+    }
+    const result = await installChromeExtension({ sourceDir: bundled });
+    if (fs.existsSync(path.join(result.path, "manifest.json"))) {
+      return result.path;
+    }
+    return null;
+  } catch {
+    return null;
   }
 }
 
@@ -169,7 +202,7 @@ export async function launchOpenClawChrome(
   }
   await ensurePortAvailable(profile.cdpPort);
 
-  const exe = resolveBrowserExecutable(resolved);
+  let exe = resolveBrowserExecutable(resolved);
   if (!exe) {
     throw new Error(
       "No supported browser found (Chrome/Brave/Edge/Chromium on macOS, Linux, or Windows).",
@@ -184,6 +217,28 @@ export async function launchOpenClawChrome(
     profile.name,
     (profile.color ?? DEFAULT_OPENCLAW_BROWSER_COLOR).toUpperCase(),
   );
+
+  // Auto-load Browser Relay extension for page tracking.
+  const extPath = await resolveAutoLoadExtensionPath();
+  if (extPath) {
+    log.info(`🦞 auto-loading Browser Relay extension from ${extPath}`);
+
+    // Branded Chrome (v137+) blocks --load-extension. Prefer Chrome for Testing
+    // which is a Google-provided binary that supports automation flags.
+    if (exe.kind === "chrome" || exe.kind === "custom") {
+      const cftBaseDir = path.join(resolveStateDir(), "browser", "chrome-for-testing");
+      const cft = findChromeForTesting(cftBaseDir);
+      if (cft) {
+        log.info(`🦞 using Chrome for Testing for --load-extension support`);
+        exe = cft;
+      } else {
+        log.warn(
+          `--load-extension requires Chrome for Testing (branded Chrome blocks it since v137). ` +
+            `Install with: npx @puppeteer/browsers install chrome@stable --path "${cftBaseDir}"`,
+        );
+      }
+    }
+  }
 
   // First launch to create preference files if missing, then decorate and relaunch.
   const spawnOnce = () => {
@@ -216,6 +271,14 @@ export async function launchOpenClawChrome(
 
     // Stealth: hide navigator.webdriver from automation detection (#80)
     args.push("--disable-blink-features=AutomationControlled");
+
+    // Auto-load Browser Relay extension for page tracking.
+    // Both flags are needed: --load-extension loads it, --disable-extensions-except
+    // ensures Chrome activates it and suppresses the "developer mode" popup.
+    if (extPath) {
+      args.push(`--load-extension=${extPath}`);
+      args.push(`--disable-extensions-except=${extPath}`);
+    }
 
     // Always open a blank tab to ensure a target exists.
     args.push("about:blank");

@@ -194,5 +194,7 @@ export function ensureProfileCleanExit(userDataDir: string) {
   const prefs = safeReadJson(preferencesPath) ?? {};
   setDeep(prefs, ["exit_type"], "Normal");
   setDeep(prefs, ["exited_cleanly"], true);
+  // Enable developer mode so --load-extension unpacked extensions stay active.
+  setDeep(prefs, ["extensions", "ui", "developer_mode"], true);
   safeWriteJson(preferencesPath, prefs);
 }

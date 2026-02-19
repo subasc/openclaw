@@ -26,6 +26,9 @@ const childSessionToTab = new Map()
 /** @type {Map<number, {resolve:(v:any)=>void, reject:(e:Error)=>void}>} */
 const pending = new Map()
 
+/** @type {ReturnType<typeof setTimeout>|null} */
+let autoAttachRetryTimer = null
+
 function nowStack() {
   try {
     return new Error().stack || ''
@@ -120,6 +123,9 @@ function onRelayClosed(reason) {
   tabs.clear()
   tabBySession.clear()
   childSessionToTab.clear()
+
+  // Auto-reconnect after delay
+  autoAttachRetryTimer = setTimeout(() => void autoAttachAllTabs(), 5000)
 }
 
 function sendToRelay(payload) {
@@ -169,6 +175,9 @@ async function onRelayMessage(text) {
     } catch {
       // ignore
     }
+    // Touch Chrome API to reset MV3 service worker idle timer.
+    // WebSocket events alone don't prevent the 30s idle shutdown.
+    void chrome.storage.local.get(['_keepalive'])
     return
   }
 
@@ -436,3 +445,68 @@ chrome.runtime.onInstalled.addListener(() => {
   // Useful: first-time instructions.
   void chrome.runtime.openOptionsPage()
 })
+
+// === Auto-Attach Mode ===
+// When loaded via --load-extension, auto-connect to relay and attach all tabs.
+
+async function autoAttachAllTabs() {
+  if (autoAttachRetryTimer) {
+    clearTimeout(autoAttachRetryTimer)
+    autoAttachRetryTimer = null
+  }
+  try {
+    await ensureRelayConnection()
+    const allTabs = await chrome.tabs.query({})
+    for (const tab of allTabs) {
+      if (tab.id && !tabs.has(tab.id) && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+        try {
+          await attachTab(tab.id)
+        } catch {
+          // Skip tabs that can't be attached (e.g., chrome:// pages)
+        }
+      }
+    }
+  } catch {
+    // Relay not available yet — retry with backoff
+    autoAttachRetryTimer = setTimeout(() => void autoAttachAllTabs(), 5000)
+  }
+}
+
+async function autoAttachNewTab(tabId) {
+  try {
+    if (tabs.has(tabId)) return
+    const tab = await chrome.tabs.get(tabId).catch(() => null)
+    if (!tab || !tab.url || tab.url.startsWith('chrome://') || tab.url.startsWith('chrome-extension://')) return
+    await ensureRelayConnection()
+    await attachTab(tabId)
+  } catch {
+    // ignore
+  }
+}
+
+// Auto-attach tabs when they finish loading
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.status === 'complete') {
+    void autoAttachNewTab(tabId)
+  }
+})
+
+// Periodic keepalive: chrome.alarms wakes the MV3 service worker even after idle shutdown.
+// WebSocket activity alone doesn't prevent Chrome from terminating the SW after 30s.
+try {
+  if (typeof chrome !== 'undefined' && chrome.alarms) {
+    chrome.alarms.create('keepalive', { periodInMinutes: 0.4 })
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name === 'keepalive') {
+        if (!relayWs || relayWs.readyState !== WebSocket.OPEN) {
+          void autoAttachAllTabs()
+        }
+      }
+    })
+  }
+} catch {
+  // chrome.alarms may not be available in all contexts
+}
+
+// Kickstart auto-attach (runs on service worker startup)
+void autoAttachAllTabs()
