@@ -10,6 +10,8 @@ export type TelegramSendResult = {
   error?: string;
 };
 
+export type InlineButton = { text: string; callback_data: string } | { text: string; url: string };
+
 /**
  * Send a text message via the Telegram Bot API.
  * Returns the message_id of the sent message (needed for reply tracking).
@@ -20,7 +22,7 @@ export async function sendTelegramMessage(params: {
   text: string;
   parseMode?: "MarkdownV2" | "HTML";
   replyToMessageId?: number;
-  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+  replyMarkup?: { inline_keyboard: Array<Array<InlineButton>> };
 }): Promise<TelegramSendResult> {
   const { botToken, chatId, text, parseMode, replyToMessageId, replyMarkup } = params;
 
@@ -75,7 +77,7 @@ export async function editTelegramMessage(params: {
   messageId: number;
   text: string;
   parseMode?: "MarkdownV2" | "HTML";
-  replyMarkup?: { inline_keyboard: Array<Array<{ text: string; callback_data: string }>> };
+  replyMarkup?: { inline_keyboard: Array<Array<InlineButton>> };
 }): Promise<TelegramSendResult> {
   const { botToken, chatId, messageId, text, parseMode, replyMarkup } = params;
 

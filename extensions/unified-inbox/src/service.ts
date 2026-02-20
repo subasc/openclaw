@@ -12,16 +12,18 @@ import type { IMsAuthProvider } from "./types.js";
 import { setToolAuthProviders } from "./agent-tools.js";
 import { BrowserTokenAuth } from "./browser-token-auth.js";
 import { CalendarMonitor } from "./calendar-monitor.js";
+import { DirectReplyFlow } from "./direct-reply-flow.js";
 import { EmailMonitor } from "./email-monitor.js";
 import { ShortIdRegistry, EmailReplyFlow } from "./email-reply-flow.js";
 import { getMe } from "./ms-graph-client.js";
 import { setReplyRouterDependencies } from "./reply-router.js";
 import { ReplyStore } from "./reply-store.js";
 import { TeamsChatMonitor } from "./teams-chat-monitor.js";
+import type { ButtonContext } from "./types.js";
 import { SubBotRegistry, createMonitorSubBot, createWhatsAppSubBot } from "./sub-bot-registry.js";
 import { setCommandDependencies } from "./telegram-commands.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
-import { setWhatsAppBridgeReplyStore } from "./whatsapp-bridge.js";
+import { setWhatsAppBridgeReplyStore, setWhatsAppBridgeButtonRegistry } from "./whatsapp-bridge.js";
 
 type Logger = {
   info: (msg: string) => void;
@@ -32,7 +34,9 @@ type Logger = {
 export type UnifiedInboxServiceHandle = {
   service: OpenClawPluginService;
   getEmailReplyFlow: () => EmailReplyFlow | null;
+  getDirectReplyFlow: () => DirectReplyFlow | null;
   getRegistry: () => SubBotRegistry | null;
+  setWhatsAppSend: (fn: (jid: string, text: string) => Promise<void>) => void;
 };
 
 export function createUnifiedInboxService(
@@ -46,9 +50,11 @@ export function createUnifiedInboxService(
   let emailMonitor: EmailMonitor | null = null;
   let calendarMonitor: CalendarMonitor | null = null;
   let teamsChatMonitor: TeamsChatMonitor | null = null;
-  const shortIdRegistry = new ShortIdRegistry();
+  const shortIdRegistry = new ShortIdRegistry<ButtonContext>();
   let emailReplyFlow: EmailReplyFlow | null = null;
+  let directReplyFlow: DirectReplyFlow | null = null;
   let registry: SubBotRegistry | null = null;
+  let pendingWhatsAppSend: ((jid: string, text: string) => Promise<void>) | null = null;
 
   const service: OpenClawPluginService = {
     id: "unified-inbox",
@@ -115,6 +121,7 @@ export function createUnifiedInboxService(
 
       // 3. Wire up shared dependencies (reply routing wired later once we know scopes)
       setWhatsAppBridgeReplyStore(replyStore);
+      setWhatsAppBridgeButtonRegistry(shortIdRegistry);
 
       // 4. Try loading tokens from browser tabs (parallel — share the CDP wait)
       const [hasOutlookTokens, hasTeamsTokens, hasOutlookRestTokens] = await Promise.all([
@@ -187,12 +194,22 @@ export function createUnifiedInboxService(
       // Create EmailReplyFlow for interactive reply workflow
       emailReplyFlow = new EmailReplyFlow(cfg, shortIdRegistry, mailSendAuth, mailAuth, log);
 
-      // Wire reply routing with scope-aware auth (after EmailReplyFlow is created)
+      // Create DirectReplyFlow for Teams/WhatsApp inline button replies
+      directReplyFlow = new DirectReplyFlow(
+        cfg,
+        shortIdRegistry,
+        chatAuth ?? null,
+        pendingWhatsAppSend, // may be set by index.ts before service starts
+        log,
+      );
+
+      // Wire reply routing with scope-aware auth (after flows are created)
       setReplyRouterDependencies({
         auth: mailAuth, // email replies need Mail.Send (Teams token)
         teamsAuth: chatAuth, // Teams replies need Chat.ReadWrite (Outlook token)
         replyStore,
         emailReplyFlow,
+        directReplyFlow,
       });
 
       if (cfg.email.enabled && mailAuth.isAuthenticated()) {
@@ -222,7 +239,7 @@ export function createUnifiedInboxService(
       }
 
       if (cfg.teamsChat.enabled && chatAuth?.isAuthenticated()) {
-        teamsChatMonitor = new TeamsChatMonitor(cfg, chatAuth, replyStore, log);
+        teamsChatMonitor = new TeamsChatMonitor(cfg, chatAuth, replyStore, shortIdRegistry, log);
         await teamsChatMonitor.start();
       }
 
@@ -315,21 +332,37 @@ export function createUnifiedInboxService(
         ]);
       }
 
-      // 10. Notify startup
-      const monitors = [
-        emailMonitor ? "Email" : null,
-        calendarMonitor ? "Calendar" : null,
-        teamsChatMonitor ? "Teams Chat" : null,
-        cfg.whatsapp.enabled ? "WhatsApp Bridge" : null,
-      ]
-        .filter(Boolean)
-        .join(", ");
+      // 10. Notify startup with dashboard
+      const allBots = registry.getAll();
+      const statusLines = allBots.map((bot) => {
+        const state = bot.status.paused ? "paused" : bot.status.running ? "running" : "stopped";
+        return `${bot.name}: ${state}`;
+      });
 
-      log.info(`unified-inbox: monitors started (${monitors || "none"})`);
+      const dashboardText = [
+        "[Unified Inbox] Started",
+        "",
+        ...statusLines,
+      ].join("\n");
+
+      // Build inline buttons for each sub-bot (toggle start/stop)
+      const botButtons = allBots.map((bot) => ({
+        text: `${bot.status.running ? "Stop" : "Start"} ${bot.name.replace(" Monitor", "").replace(" Bridge", "")}`,
+        callback_data: `inbox:sb:${bot.id}`,
+      }));
+
+      // Arrange buttons in rows of 2
+      const buttonRows: Array<Array<{ text: string; callback_data: string }>> = [];
+      for (let i = 0; i < botButtons.length; i += 2) {
+        buttonRows.push(botButtons.slice(i, i + 2));
+      }
+
+      log.info(`unified-inbox: monitors started (${allBots.map((b) => b.name).join(", ") || "none"})`);
       await sendTelegramMessage({
         botToken: cfg.telegramBotToken,
         chatId: cfg.telegramChatId,
-        text: `[Unified Inbox] Started (CDP token extraction). Active monitors: ${monitors || "none"}`,
+        text: dashboardText,
+        replyMarkup: buttonRows.length > 0 ? { inline_keyboard: buttonRows } : undefined,
       });
     },
 
@@ -355,6 +388,12 @@ export function createUnifiedInboxService(
   return {
     service,
     getEmailReplyFlow: () => emailReplyFlow,
+    getDirectReplyFlow: () => directReplyFlow,
     getRegistry: () => registry,
+    setWhatsAppSend: (fn: (jid: string, text: string) => Promise<void>) => {
+      pendingWhatsAppSend = fn;
+      // If DirectReplyFlow is already created, wire it immediately
+      directReplyFlow?.setWhatsAppSend(fn);
+    },
   };
 }

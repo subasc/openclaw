@@ -5,7 +5,7 @@
 import type { UnifiedInboxConfig } from "./config.js";
 import type { ShortIdRegistry } from "./email-reply-flow.js";
 import type { ReplyStore } from "./reply-store.js";
-import type { MonitorStatus, EmailMessage, IMsAuthProvider } from "./types.js";
+import type { MonitorStatus, EmailMessage, IMsAuthProvider, ButtonContext } from "./types.js";
 import { formatEmailWithSummary, formatEmailPlain } from "./formatters.js";
 import { summarizeEmail } from "./llm-client.js";
 import { fetchMailDelta, markAsRead } from "./ms-graph-client.js";
@@ -37,7 +37,7 @@ export class EmailMonitor {
     private cfg: UnifiedInboxConfig,
     private auth: IMsAuthProvider,
     private replyStore: ReplyStore,
-    private shortIdRegistry: ShortIdRegistry,
+    private shortIdRegistry: ShortIdRegistry<ButtonContext>,
     private log: Logger,
     private userEmail?: string,
   ) {}
@@ -203,6 +203,7 @@ export class EmailMonitor {
     // Register in ShortIdRegistry for inline button callbacks
     // We need the telegramMessageId after sending, so register with a placeholder first
     const shortId = this.shortIdRegistry.register({
+      type: "email",
       messageId: email.id,
       fromName,
       fromAddress: fromAddr,

@@ -7,7 +7,7 @@ import {
 } from "./src/agent-tools.js";
 import { resolveUnifiedInboxConfig } from "./src/config.js";
 import { formatNotificationsAsContext } from "./src/notification-store.js";
-import { createReplyRouter } from "./src/reply-router.js";
+import { createReplyRouter, setReplyRouterWhatsAppSend } from "./src/reply-router.js";
 import { createUnifiedInboxService } from "./src/service.js";
 import { registerInboxCommands } from "./src/telegram-commands.js";
 import { createWhatsAppBridge } from "./src/whatsapp-bridge.js";
@@ -56,6 +56,18 @@ const plugin = {
         if (waBot && !waBot.status.running) return;
         return whatsappBridge.handleMessageReceived(event, ctx);
       });
+
+      // Wire WhatsApp send for reply router + direct reply flow
+      try {
+        const waSend = api.runtime.channel.whatsapp.sendMessageWhatsApp;
+        const whatsAppSend = async (jid: string, text: string) => {
+          await waSend(jid, text, { verbose: false });
+        };
+        setReplyRouterWhatsAppSend(whatsAppSend);
+        serviceHandle.setWhatsAppSend(whatsAppSend);
+      } catch {
+        api.logger.warn("unified-inbox: WhatsApp send function not available (WhatsApp extension may not be loaded)");
+      }
     }
 
     // Register Telegram slash commands
@@ -69,20 +81,61 @@ const plugin = {
 
     // Handle inline button callbacks directly — bypasses agent pipeline entirely (no flash)
     api.on("telegram_callback", async (event) => {
-      const flow = serviceHandle.getEmailReplyFlow();
-      if (!flow || !event.data.startsWith("inbox:")) return;
-      await flow.handleCallback(event.data);
-      return { handled: true };
+      if (!event.data.startsWith("inbox:")) return;
+
+      // Try email reply flow first
+      const emailFlow = serviceHandle.getEmailReplyFlow();
+      if (emailFlow) {
+        const handled = await emailFlow.handleCallback(event.data);
+        if (handled) return { handled: true };
+      }
+
+      // Try direct reply flow (Teams/WhatsApp)
+      const directFlow = serviceHandle.getDirectReplyFlow();
+      if (directFlow) {
+        const handled = await directFlow.handleCallback(event.data);
+        if (handled) return { handled: true };
+      }
+
+      // Handle sub-bot toggle buttons (inbox:sb:*)
+      if (event.data.startsWith("inbox:sb:")) {
+        const botId = event.data.slice("inbox:sb:".length);
+        const registry = serviceHandle.getRegistry();
+        if (registry) {
+          const bot = registry.get(botId);
+          if (bot) {
+            let result: string;
+            if (bot.status.running) {
+              result = registry.stopBot(botId);
+            } else {
+              result = await registry.startBot(botId);
+            }
+            const { sendTelegramMessage: send } = await import("./src/telegram-sender.js");
+            await send({
+              botToken: cfg.telegramBotToken,
+              chatId: cfg.telegramChatId,
+              text: result,
+            });
+          }
+        }
+        return { handled: true };
+      }
     });
 
     // Inject context into AI agent based on reply flow state
     api.on("before_agent_start", () => {
-      const flow = serviceHandle.getEmailReplyFlow();
+      const emailFlow = serviceHandle.getEmailReplyFlow();
+      const directFlow = serviceHandle.getDirectReplyFlow();
 
-      // If the flow is busy (drafting or awaiting approval), suppress the agent.
+      // If either flow is busy, suppress the agent.
       // Override systemPrompt to be minimal so the model generates NO_REPLY
       // as fast as possible — minimizes the brief streaming flash in Telegram.
-      if (flow?.shouldSuppressAgentReply() || flow?.isBusy()) {
+      if (
+        emailFlow?.shouldSuppressAgentReply() ||
+        emailFlow?.isBusy() ||
+        directFlow?.shouldSuppressAgentReply() ||
+        directFlow?.isBusy()
+      ) {
         return {
           systemPrompt: "Output exactly: NO_REPLY",
           prependContext: "NO_REPLY",

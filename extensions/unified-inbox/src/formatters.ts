@@ -182,8 +182,6 @@ export function formatTeamsChatNotification(msg: TeamsChatMessage, chatName: str
     `*\\[Teams\\]* ${esc(chatName)}`,
     `*${esc(sender)}* \\(${esc(time)}\\):`,
     esc(truncate(bodyText, 500)),
-    ``,
-    `_Reply to this message to respond in Teams_`,
   ].join("\n");
 }
 
@@ -209,8 +207,6 @@ export function formatWhatsAppNotification(msg: WhatsAppInboundMessage): string 
   }
 
   lines.push(esc(truncate(msg.content, 500)));
-  lines.push(``);
-  lines.push(`_Reply to this message to respond on WhatsApp_`);
 
   return lines.join("\n");
 }

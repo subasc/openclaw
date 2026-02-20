@@ -145,11 +145,15 @@ export class CalendarMonitor {
     minutesBefore: number,
   ): Promise<void> {
     const text = formatCalendarReminder(event, minutesBefore);
+    const joinUrl = event.onlineMeeting?.joinUrl || event.onlineMeetingUrl;
     await sendTelegramMessage({
       botToken: this.cfg.telegramBotToken,
       chatId: this.cfg.telegramChatId,
       text,
       parseMode: "MarkdownV2",
+      replyMarkup: joinUrl
+        ? { inline_keyboard: [[{ text: "Join Meeting", url: joinUrl }]] }
+        : undefined,
     });
 
     // Push plain text to notification store for AI agent context

@@ -129,6 +129,45 @@ export type TokenData = {
   scopes: string[];
 };
 
+/** Context for Teams inline button callbacks */
+export type TeamsButtonContext = {
+  type: "teams";
+  chatId: string;
+  chatName: string;
+  senderName: string;
+  messageId?: string;
+  telegramMessageId: number;
+  registeredAt: number;
+};
+
+/** Context for WhatsApp inline button callbacks */
+export type WhatsAppButtonContext = {
+  type: "whatsapp";
+  jid: string;
+  senderName: string;
+  content: string;
+  groupName?: string;
+  groupJid?: string;
+  messageId?: string;
+  telegramMessageId: number;
+  registeredAt: number;
+};
+
+/** Union of all button contexts for the shared ShortIdRegistry */
+export type ButtonContext =
+  | ({ type: "email" } & {
+      messageId: string;
+      fromName: string;
+      fromAddress: string;
+      subject: string;
+      bodyPreview: string;
+      toRecipients: Array<{ name: string; address: string }>;
+      telegramMessageId: number;
+      registeredAt: number;
+    })
+  | TeamsButtonContext
+  | WhatsAppButtonContext;
+
 /** Monitor status for /inbox-status command */
 export type MonitorStatus = {
   running: boolean;

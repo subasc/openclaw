@@ -3,8 +3,9 @@
 // ============================================================================
 
 import type { UnifiedInboxConfig } from "./config.js";
+import type { ShortIdRegistry } from "./email-reply-flow.js";
 import type { ReplyStore } from "./reply-store.js";
-import type { MonitorStatus, TeamsChat, TeamsChatMessage, IMsAuthProvider } from "./types.js";
+import type { MonitorStatus, TeamsChat, TeamsChatMessage, IMsAuthProvider, ButtonContext } from "./types.js";
 import { formatTeamsChatNotification, formatTeamsChatPlain } from "./formatters.js";
 import { listChats, listChatMessages } from "./ms-graph-client.js";
 import { pushNotification } from "./notification-store.js";
@@ -35,6 +36,7 @@ export class TeamsChatMonitor {
     private cfg: UnifiedInboxConfig,
     private auth: IMsAuthProvider,
     private replyStore: ReplyStore,
+    private buttonRegistry: ShortIdRegistry<ButtonContext>,
     private log: Logger,
   ) {}
 
@@ -184,14 +186,35 @@ export class TeamsChatMonitor {
       (chat.chatType === "oneOnOne"
         ? msg.from?.user?.displayName || "Direct Message"
         : "Group Chat");
+    const senderName = msg.from?.user?.displayName || msg.from?.application?.displayName || "Unknown";
 
     const text = formatTeamsChatNotification(msg, chatName);
+
+    // Register in button registry for inline button callbacks
+    const shortId = this.buttonRegistry.register({
+      type: "teams",
+      chatId: chat.id,
+      chatName,
+      senderName,
+      messageId: msg.id,
+      telegramMessageId: 0, // Updated after send
+      registeredAt: Date.now(),
+    });
 
     const result = await sendTelegramMessage({
       botToken: this.cfg.telegramBotToken,
       chatId: this.cfg.telegramChatId,
       text,
       parseMode: "MarkdownV2",
+      replyMarkup: {
+        inline_keyboard: [
+          [
+            { text: "Reply", callback_data: `inbox:tr:${shortId}` },
+            { text: "Reply All", callback_data: `inbox:tra:${shortId}` },
+            { text: "Delete", callback_data: `inbox:td:${shortId}` },
+          ],
+        ],
+      },
     });
 
     // Push plain text to notification store for AI agent context
@@ -202,6 +225,10 @@ export class TeamsChatMonitor {
     });
 
     if (result.ok && result.messageId) {
+      // Update the button registry entry with the actual Telegram message ID
+      const ctx = this.buttonRegistry.lookup(shortId);
+      if (ctx) ctx.telegramMessageId = result.messageId;
+
       this.replyStore.set(result.messageId, "teams-chat", {
         type: "teams-chat",
         chatId: chat.id,

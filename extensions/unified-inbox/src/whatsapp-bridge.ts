@@ -3,17 +3,24 @@
 // Hooks into message_received for WhatsApp, forwards to Telegram
 // ============================================================================
 
+import type { ShortIdRegistry } from "./email-reply-flow.js";
 import type { ReplyStore } from "./reply-store.js";
 import type { UnifiedInboxConfig } from "./config.js";
+import type { ButtonContext } from "./types.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 import { formatWhatsAppNotification, formatWhatsAppPlain } from "./formatters.js";
 import { pushNotification } from "./notification-store.js";
 
 // Lazy-loaded shared reply store (set by service.ts)
 let sharedReplyStore: ReplyStore | null = null;
+let sharedButtonRegistry: ShortIdRegistry<ButtonContext> | null = null;
 
 export function setWhatsAppBridgeReplyStore(store: ReplyStore): void {
   sharedReplyStore = store;
+}
+
+export function setWhatsAppBridgeButtonRegistry(registry: ShortIdRegistry<ButtonContext>): void {
+  sharedButtonRegistry = registry;
 }
 
 type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
@@ -61,11 +68,38 @@ export function createWhatsAppBridge(
         messageId,
       });
 
+      // Register in button registry for inline button callbacks
+      let shortId: string | undefined;
+      if (sharedButtonRegistry) {
+        shortId = sharedButtonRegistry.register({
+          type: "whatsapp",
+          jid: event.from,
+          senderName,
+          content: event.content,
+          groupName,
+          groupJid,
+          messageId,
+          telegramMessageId: 0, // Updated after send
+          registeredAt: Date.now(),
+        });
+      }
+
       const result = await sendTelegramMessage({
         botToken: cfg.telegramBotToken,
         chatId: cfg.telegramChatId,
         text,
         parseMode: "MarkdownV2",
+        replyMarkup: shortId
+          ? {
+              inline_keyboard: [
+                [
+                  { text: "Reply", callback_data: `inbox:wr:${shortId}` },
+                  { text: "Reply All", callback_data: `inbox:wra:${shortId}` },
+                  { text: "Delete", callback_data: `inbox:wd:${shortId}` },
+                ],
+              ],
+            }
+          : undefined,
       });
 
       // Push plain text to notification store for AI agent context
@@ -80,15 +114,23 @@ export function createWhatsAppBridge(
         timestamp: Date.now(),
       });
 
-      if (result.ok && result.messageId && sharedReplyStore) {
-        // The "from" for WhatsApp is typically the JID (e.g., "5511999999999@s.whatsapp.net")
-        const jid = groupJid || event.from;
-        sharedReplyStore.set(result.messageId, "whatsapp", {
-          type: "whatsapp",
-          jid,
-          messageId,
-          participant: groupJid ? event.from : undefined,
-        });
+      if (result.ok && result.messageId) {
+        // Update the button registry entry with the actual Telegram message ID
+        if (shortId && sharedButtonRegistry) {
+          const ctx = sharedButtonRegistry.lookup(shortId);
+          if (ctx) ctx.telegramMessageId = result.messageId;
+        }
+
+        if (sharedReplyStore) {
+          // The "from" for WhatsApp is typically the JID (e.g., "5511999999999@s.whatsapp.net")
+          const jid = groupJid || event.from;
+          sharedReplyStore.set(result.messageId, "whatsapp", {
+            type: "whatsapp",
+            jid,
+            messageId,
+            participant: groupJid ? event.from : undefined,
+          });
+        }
       }
 
       if (!result.ok) {

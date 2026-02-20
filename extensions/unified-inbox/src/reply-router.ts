@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { UnifiedInboxConfig } from "./config.js";
+import type { DirectReplyFlow } from "./direct-reply-flow.js";
 import type { EmailReplyFlow } from "./email-reply-flow.js";
 import type { ReplyStore } from "./reply-store.js";
 import type { IMsAuthProvider } from "./types.js";
@@ -15,6 +16,7 @@ let sharedTeamsAuth: IMsAuthProvider | null = null;
 let sharedReplyStore: ReplyStore | null = null;
 let sharedWhatsAppSend: ((jid: string, text: string) => Promise<void>) | null = null;
 let sharedEmailReplyFlow: EmailReplyFlow | null = null;
+let sharedDirectReplyFlow: DirectReplyFlow | null = null;
 
 export function setReplyRouterDependencies(deps: {
   auth: IMsAuthProvider;
@@ -22,12 +24,19 @@ export function setReplyRouterDependencies(deps: {
   replyStore: ReplyStore;
   whatsAppSend?: (jid: string, text: string) => Promise<void>;
   emailReplyFlow?: EmailReplyFlow;
+  directReplyFlow?: DirectReplyFlow;
 }): void {
   sharedAuth = deps.auth;
   sharedTeamsAuth = deps.teamsAuth ?? deps.auth;
   sharedReplyStore = deps.replyStore;
   if (deps.whatsAppSend) sharedWhatsAppSend = deps.whatsAppSend;
   if (deps.emailReplyFlow) sharedEmailReplyFlow = deps.emailReplyFlow;
+  if (deps.directReplyFlow) sharedDirectReplyFlow = deps.directReplyFlow;
+}
+
+/** Wire WhatsApp send function (called from index.ts after WhatsApp extension loads) */
+export function setReplyRouterWhatsAppSend(fn: (jid: string, text: string) => Promise<void>): void {
+  sharedWhatsAppSend = fn;
 }
 
 type Logger = {
@@ -49,12 +58,17 @@ export function createReplyRouter(cfg: UnifiedInboxConfig, log: Logger) {
       // Only process Telegram messages
       if (ctx.channelId !== "telegram") return;
 
-      // Capture user's reply notes when in awaiting_notes state.
+      // Capture user's reply notes when in awaiting_notes/awaiting_reply state.
       // Don't return — let the message continue to the agent pipeline.
       // (inbox:* callbacks are now handled via the telegram_callback hook,
       //  which bypasses the agent pipeline entirely — no "No" flash.)
       if (sharedEmailReplyFlow) {
-        sharedEmailReplyFlow.handleIncomingMessage(event.content ?? "");
+        const consumed = sharedEmailReplyFlow.handleIncomingMessage(event.content ?? "");
+        if (consumed) return;
+      }
+      if (sharedDirectReplyFlow) {
+        const consumed = sharedDirectReplyFlow.handleIncomingMessage(event.content ?? "");
+        if (consumed) return;
       }
 
       // Check if this is a reply to a forwarded message

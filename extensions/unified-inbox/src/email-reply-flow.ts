@@ -3,7 +3,7 @@
 // ============================================================================
 
 import type { UnifiedInboxConfig } from "./config.js";
-import type { IMsAuthProvider } from "./types.js";
+import type { ButtonContext, IMsAuthProvider } from "./types.js";
 import { formatDraftPreview } from "./formatters.js";
 import { draftReply } from "./llm-client.js";
 import {
@@ -25,6 +25,7 @@ type Logger = {
 // ============================================================================
 
 export type EmailContext = {
+  type: "email";
   messageId: string;
   fromName: string;
   fromAddress: string;
@@ -35,12 +36,12 @@ export type EmailContext = {
   registeredAt: number;
 };
 
-export class ShortIdRegistry {
+export class ShortIdRegistry<T extends { registeredAt: number } = EmailContext> {
   private counter = 0;
-  private map = new Map<string, EmailContext>();
+  private map = new Map<string, T>();
   private static readonly MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 
-  register(context: EmailContext): string {
+  register(context: T): string {
     this.prune();
     const id = this.counter.toString(36);
     this.counter++;
@@ -48,7 +49,7 @@ export class ShortIdRegistry {
     return id;
   }
 
-  lookup(shortId: string): EmailContext | undefined {
+  lookup(shortId: string): T | undefined {
     const ctx = this.map.get(shortId);
     if (!ctx) return undefined;
     if (Date.now() - ctx.registeredAt > ShortIdRegistry.MAX_AGE_MS) {
@@ -97,11 +98,18 @@ export class EmailReplyFlow {
 
   constructor(
     private cfg: UnifiedInboxConfig,
-    private registry: ShortIdRegistry,
+    private registry: ShortIdRegistry<ButtonContext>,
     private mailSendAuth: IMsAuthProvider,
     private mailReadAuth: IMsAuthProvider,
     private log: Logger,
   ) {}
+
+  /** Narrow a ButtonContext lookup to EmailContext */
+  private lookupEmail(shortId: string): EmailContext | undefined {
+    const ctx = this.lookupEmail(shortId);
+    if (!ctx || ctx.type !== "email") return undefined;
+    return ctx as EmailContext;
+  }
 
   /** Set the display name used for email sign-offs (e.g. "Regards, Subas") */
   setSenderName(name: string): void {
@@ -194,7 +202,7 @@ export class EmailReplyFlow {
     mode: "reply" | "reply-all",
     notes: string,
   ): Promise<void> {
-    const ctx = this.registry.lookup(shortId);
+    const ctx = this.lookupEmail(shortId);
     if (!ctx) {
       this.reset();
       return;
@@ -269,7 +277,7 @@ export class EmailReplyFlow {
   // ---------- Private flow handlers ----------
 
   private async startReplyFlow(shortId: string, mode: "reply" | "reply-all"): Promise<boolean> {
-    const ctx = this.registry.lookup(shortId);
+    const ctx = this.lookupEmail(shortId);
     if (!ctx) {
       this.log.warn(`unified-inbox: reply flow — unknown shortId: ${shortId}`);
       return true; // Consumed but invalid
@@ -295,7 +303,7 @@ export class EmailReplyFlow {
   }
 
   private async handleDelete(shortId: string): Promise<boolean> {
-    const ctx = this.registry.lookup(shortId);
+    const ctx = this.lookupEmail(shortId);
     if (!ctx) return true;
 
     this.suppressNextReply = true;
@@ -323,7 +331,7 @@ export class EmailReplyFlow {
   private async handleApproveSend(): Promise<boolean> {
     if (this.state.phase !== "awaiting_approval") return true;
 
-    const ctx = this.registry.lookup(this.state.shortId);
+    const ctx = this.lookupEmail(this.state.shortId);
     if (!ctx) {
       this.reset();
       return true;
