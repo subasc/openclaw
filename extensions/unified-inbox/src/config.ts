@@ -77,7 +77,7 @@ const DEFAULTS: UnifiedInboxConfig = {
     maxPerPoll: 10,
     filter: {
       enabled: true,
-      bodyMentionKeywords: ["@Subas"],
+      bodyMentionKeywords: ["@Subas", "Subas"],
     },
   },
   calendar: {

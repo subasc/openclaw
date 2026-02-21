@@ -153,24 +153,15 @@ export class EmailMonitor {
     const filter = this.cfg.email.filter;
     if (!filter.enabled) return true;
 
-    // 1. User is a direct recipient (To: field)
-    if (this.userEmail && email.toRecipients?.length) {
-      const userLower = this.userEmail.toLowerCase();
-      const isDirectRecipient = email.toRecipients.some(
-        (r) => r.emailAddress?.address?.toLowerCase() === userLower,
-      );
-      if (isDirectRecipient) return true;
-    }
-
-    // 2. Email has high importance (urgent flag)
-    if (email.importance === "high") return true;
-
-    // 3. Email body mentions configured keywords (e.g. @Subas)
+    // Only forward emails that specifically mention the user by name or @mention
+    // in the email body/subject. This filters out CC/bulk/FYI emails.
     if (filter.bodyMentionKeywords.length > 0) {
       const bodyText = (
         (email.body?.content ?? "") +
         " " +
-        (email.bodyPreview ?? "")
+        (email.bodyPreview ?? "") +
+        " " +
+        (email.subject ?? "")
       ).toLowerCase();
       const hasMention = filter.bodyMentionKeywords.some((kw) =>
         bodyText.includes(kw.toLowerCase()),

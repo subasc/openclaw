@@ -72,8 +72,15 @@ export async function summarizeEmail(
   params: { from: string; subject: string; body: string },
   log?: Logger,
 ): Promise<string | undefined> {
-  const systemPrompt =
-    "Summarize this email concisely. Start with a one-line summary, then list key points as bullet points using the bullet character. Keep it brief — this is for a mobile notification. Output plain text only, no markdown formatting.";
+  const systemPrompt = [
+    "You are Subas's executive assistant. Analyze this email and provide an actionable breakdown.",
+    "Format your response as:",
+    "1. One-line summary of what the email is about",
+    "2. What is being asked of Subas or what action Subas needs to take",
+    "3. Key details (deadlines, names, amounts, dates) as bullet points",
+    "4. Suggested response direction in one line (e.g. 'Confirm attendance' or 'Provide feedback by Friday')",
+    "Keep it brief — this is for a mobile notification. Output plain text only, no markdown formatting.",
+  ].join("\n");
 
   const userContent = `From: ${params.from}\nSubject: ${params.subject}\n\n${params.body}`;
 
