@@ -58,11 +58,11 @@ function candidateBinDirs(opts: EnsureOpenClawPathOpts): { prepend: string[]; ap
   const prepend: string[] = [];
   const append: string[] = [];
 
-  // Bundled macOS app: `openclaw` lives next to the executable (process.execPath).
+  // Always include the node binary's directory so sibling tools (pnpm, npm, npx)
+  // installed alongside node (e.g. via corepack/homebrew) are discoverable.
   try {
     const execDir = path.dirname(execPath);
-    const siblingCli = path.join(execDir, "openclaw");
-    if (isExecutable(siblingCli)) {
+    if (isDirectory(execDir)) {
       prepend.push(execDir);
     }
   } catch {

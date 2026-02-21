@@ -25,13 +25,23 @@ type BuildServicePathOptions = MinimalServicePathOptions & {
 };
 
 function resolveSystemPathDirs(platform: NodeJS.Platform): string[] {
+  const dirs: string[] = [];
+  // Include the running node binary's directory so sibling tools (pnpm, npm, npx)
+  // installed alongside node (e.g. via corepack/homebrew keg-only formulas) are on PATH.
+  try {
+    const execDir = path.dirname(process.execPath);
+    if (execDir) {
+      dirs.push(execDir);
+    }
+  } catch {
+    // ignore
+  }
   if (platform === "darwin") {
-    return ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"];
+    dirs.push("/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin");
+  } else if (platform === "linux") {
+    dirs.push("/usr/local/bin", "/usr/bin", "/bin");
   }
-  if (platform === "linux") {
-    return ["/usr/local/bin", "/usr/bin", "/bin"];
-  }
-  return [];
+  return dirs;
 }
 
 /**
