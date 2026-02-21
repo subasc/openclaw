@@ -3,7 +3,14 @@
 // Pattern follows extensions/msteams/src/graph.ts fetchGraphJson()
 // ============================================================================
 
-import type { EmailMessage, CalendarEvent, TeamsChat, TeamsChatMessage } from "./types.js";
+import type {
+  EmailMessage,
+  CalendarEvent,
+  TeamsChat,
+  TeamsChatMessage,
+  TodoTaskList,
+  TodoTask,
+} from "./types.js";
 
 const GRAPH_ROOT = "https://graph.microsoft.com/v1.0";
 
@@ -161,6 +168,180 @@ export async function fetchCalendarView(
   });
 
   return res.value;
+}
+
+/** Create a new calendar event */
+export async function createCalendarEvent(
+  token: string,
+  params: {
+    subject: string;
+    start: { dateTime: string; timeZone: string };
+    end: { dateTime: string; timeZone: string };
+    body?: string;
+    location?: string;
+    attendees?: Array<{ email: string; name?: string }>;
+    isOnlineMeeting?: boolean;
+  },
+): Promise<CalendarEvent> {
+  return fetchGraph<CalendarEvent>({
+    token,
+    path: "/me/events",
+    method: "POST",
+    body: {
+      subject: params.subject,
+      start: params.start,
+      end: params.end,
+      body: params.body ? { contentType: "Text", content: params.body } : undefined,
+      location: params.location ? { displayName: params.location } : undefined,
+      attendees: params.attendees?.map((a) => ({
+        emailAddress: { address: a.email, name: a.name ?? a.email },
+        type: "required",
+      })),
+      isOnlineMeeting: params.isOnlineMeeting ?? false,
+    },
+  });
+}
+
+/** Accept a calendar event invitation */
+export async function acceptCalendarEvent(
+  token: string,
+  eventId: string,
+  comment?: string,
+): Promise<void> {
+  await fetchGraph<void>({
+    token,
+    path: `/me/events/${eventId}/accept`,
+    method: "POST",
+    body: { comment: comment ?? "", sendResponse: true },
+  });
+}
+
+/** Decline a calendar event invitation */
+export async function declineCalendarEvent(
+  token: string,
+  eventId: string,
+  comment?: string,
+): Promise<void> {
+  await fetchGraph<void>({
+    token,
+    path: `/me/events/${eventId}/decline`,
+    method: "POST",
+    body: { comment: comment ?? "", sendResponse: true },
+  });
+}
+
+/** Tentatively accept a calendar event invitation */
+export async function tentativelyAcceptCalendarEvent(
+  token: string,
+  eventId: string,
+  comment?: string,
+): Promise<void> {
+  await fetchGraph<void>({
+    token,
+    path: `/me/events/${eventId}/tentativelyAccept`,
+    method: "POST",
+    body: { comment: comment ?? "", sendResponse: true },
+  });
+}
+
+/** Delete a calendar event */
+export async function deleteCalendarEvent(token: string, eventId: string): Promise<void> {
+  await fetchGraph<void>({
+    token,
+    path: `/me/events/${eventId}`,
+    method: "DELETE",
+  });
+}
+
+// ============================================================================
+// ToDo / Tasks endpoints
+// ============================================================================
+
+/** List all ToDo task lists */
+export async function listTodoLists(token: string): Promise<TodoTaskList[]> {
+  const res = await fetchGraph<GraphListResponse<TodoTaskList>>({
+    token,
+    path: "/me/todo/lists?$top=50",
+  });
+  return res.value;
+}
+
+/** List tasks in a ToDo list */
+export async function listTodoTasks(
+  token: string,
+  listId: string,
+  opts?: { status?: "notStarted" | "inProgress" | "completed" | "all"; top?: number },
+): Promise<TodoTask[]> {
+  const params = new URLSearchParams({
+    $top: String(opts?.top ?? 25),
+    $orderby: "createdDateTime desc",
+  });
+
+  if (opts?.status && opts.status !== "all") {
+    params.set("$filter", `status eq '${opts.status}'`);
+  }
+
+  const res = await fetchGraph<GraphListResponse<TodoTask>>({
+    token,
+    path: `/me/todo/lists/${listId}/tasks?${params}`,
+  });
+  return res.value;
+}
+
+/** Create a new ToDo task */
+export async function createTodoTask(
+  token: string,
+  listId: string,
+  params: {
+    title: string;
+    body?: string;
+    importance?: "low" | "normal" | "high";
+    dueDateTime?: { dateTime: string; timeZone: string };
+    reminderDateTime?: { dateTime: string; timeZone: string };
+  },
+): Promise<TodoTask> {
+  return fetchGraph<TodoTask>({
+    token,
+    path: `/me/todo/lists/${listId}/tasks`,
+    method: "POST",
+    body: {
+      title: params.title,
+      body: params.body ? { content: params.body, contentType: "text" } : undefined,
+      importance: params.importance ?? "normal",
+      dueDateTime: params.dueDateTime,
+      reminderDateTime: params.reminderDateTime,
+      isReminderOn: !!params.reminderDateTime,
+    },
+  });
+}
+
+/** Update a ToDo task */
+export async function updateTodoTask(
+  token: string,
+  listId: string,
+  taskId: string,
+  updates: Partial<{
+    title: string;
+    status: "notStarted" | "inProgress" | "completed";
+    importance: "low" | "normal" | "high";
+    dueDateTime: { dateTime: string; timeZone: string } | null;
+  }>,
+): Promise<TodoTask> {
+  return fetchGraph<TodoTask>({
+    token,
+    path: `/me/todo/lists/${listId}/tasks/${taskId}`,
+    method: "PATCH",
+    body: updates,
+  });
+}
+
+/** Delete a ToDo task */
+export async function deleteTodoTask(token: string, listId: string, taskId: string): Promise<void> {
+  await fetchGraph<void>({
+    token,
+    path: `/me/todo/lists/${listId}/tasks/${taskId}`,
+    method: "DELETE",
+  });
 }
 
 // ============================================================================

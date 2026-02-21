@@ -5,6 +5,15 @@ import {
   replyEmailTool,
   listTeamsChatsTool,
   sendTeamsMessageTool,
+  listCalendarTool,
+  createEventTool,
+  respondEventTool,
+  deleteEventTool,
+  listTasksTool,
+  createTaskTool,
+  completeTaskTool,
+  updateTaskTool,
+  deleteTaskTool,
 } from "./src/agent-tools.js";
 import { resolveUnifiedInboxConfig } from "./src/config.js";
 import { formatNotificationsAsContext } from "./src/notification-store.js";
@@ -76,10 +85,19 @@ const plugin = {
     // Register Telegram slash commands
     registerInboxCommands(api, cfg);
 
-    // Register agent tools so the AI can read/send emails and Teams messages
+    // Register agent tools — Email, Calendar, ToDo, Teams
     api.registerTool(listEmailsTool);
     api.registerTool(sendEmailTool);
     api.registerTool(replyEmailTool);
+    api.registerTool(listCalendarTool);
+    api.registerTool(createEventTool);
+    api.registerTool(respondEventTool);
+    api.registerTool(deleteEventTool);
+    api.registerTool(listTasksTool);
+    api.registerTool(createTaskTool);
+    api.registerTool(completeTaskTool);
+    api.registerTool(updateTaskTool);
+    api.registerTool(deleteTaskTool);
     api.registerTool(listTeamsChatsTool);
     api.registerTool(sendTeamsMessageTool);
 

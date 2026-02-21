@@ -62,6 +62,31 @@ export type TeamsChat = {
   };
 };
 
+/** Microsoft Graph ToDo task list */
+export type TodoTaskList = {
+  id: string;
+  displayName: string;
+  isOwner: boolean;
+  isShared: boolean;
+  wellknownListName?: "none" | "defaultList" | "flaggedEmails" | "unknownFutureValue";
+};
+
+/** Microsoft Graph ToDo task */
+export type TodoTask = {
+  id: string;
+  title: string;
+  body?: { content: string; contentType: string };
+  status: "notStarted" | "inProgress" | "completed" | "waitingOnOthers" | "deferred";
+  importance: "low" | "normal" | "high";
+  isReminderOn: boolean;
+  createdDateTime: string;
+  lastModifiedDateTime: string;
+  completedDateTime?: { dateTime: string; timeZone: string };
+  dueDateTime?: { dateTime: string; timeZone: string };
+  reminderDateTime?: { dateTime: string; timeZone: string };
+  categories?: string[];
+};
+
 /** Inbound WhatsApp message (from the message_received hook) */
 export type WhatsAppInboundMessage = {
   from: string;

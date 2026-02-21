@@ -184,11 +184,13 @@ export function createUnifiedInboxService(
       const chatAuth = hasOutlookTokens ? auth : teamsAuth;
 
       // Wire agent tools — use Outlook REST token for sending (has Mail.Send scope),
-      // and Graph token for reading (has Mail.Read scope)
+      // Graph token for reading (has Mail.Read scope), and
+      // Teams token for calendar/tasks (has Calendars.ReadWrite + Tasks.ReadWrite scopes)
       const mailSendAuth = hasOutlookRestTokens && outlookRestAuth ? outlookRestAuth : mailAuth;
       setToolAuthProviders({
         mailAuth: mailSendAuth,
         mailReadAuth: mailAuth,
+        calendarAuth: mailAuth, // Teams token — has Calendars.ReadWrite + Tasks.ReadWrite
         chatAuth: chatAuth!,
         log,
       });
