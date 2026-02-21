@@ -1,5 +1,6 @@
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 import {
+  listEmailsTool,
   sendEmailTool,
   replyEmailTool,
   listTeamsChatsTool,
@@ -66,14 +67,17 @@ const plugin = {
         setReplyRouterWhatsAppSend(whatsAppSend);
         serviceHandle.setWhatsAppSend(whatsAppSend);
       } catch {
-        api.logger.warn("unified-inbox: WhatsApp send function not available (WhatsApp extension may not be loaded)");
+        api.logger.warn(
+          "unified-inbox: WhatsApp send function not available (WhatsApp extension may not be loaded)",
+        );
       }
     }
 
     // Register Telegram slash commands
     registerInboxCommands(api, cfg);
 
-    // Register agent tools so the AI can send emails and Teams messages
+    // Register agent tools so the AI can read/send emails and Teams messages
+    api.registerTool(listEmailsTool);
     api.registerTool(sendEmailTool);
     api.registerTool(replyEmailTool);
     api.registerTool(listTeamsChatsTool);

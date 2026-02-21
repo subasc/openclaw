@@ -4,21 +4,34 @@
 
 import { Type } from "@sinclair/typebox";
 import type { IMsAuthProvider } from "./types.js";
-import { sendMailViaOutlookRest, replyToEmailViaOutlookRest, sendChatMessage, listChats } from "./ms-graph-client.js";
+import {
+  sendMailViaOutlookRest,
+  replyToEmailViaOutlookRest,
+  sendChatMessage,
+  listChats,
+  fetchMailDelta,
+} from "./ms-graph-client.js";
 
-type Logger = { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+type Logger = {
+  info: (msg: string) => void;
+  warn: (msg: string) => void;
+  error: (msg: string) => void;
+};
 
 // Shared auth providers — set by service.ts after startup
 let mailAuth: IMsAuthProvider | null = null;
+let mailReadAuth: IMsAuthProvider | null = null;
 let chatAuth: IMsAuthProvider | null = null;
 let toolLogger: Logger | null = null;
 
 export function setToolAuthProviders(deps: {
   mailAuth: IMsAuthProvider;
+  mailReadAuth?: IMsAuthProvider;
   chatAuth: IMsAuthProvider;
   log: Logger;
 }): void {
   mailAuth = deps.mailAuth;
+  mailReadAuth = deps.mailReadAuth ?? deps.mailAuth;
   chatAuth = deps.chatAuth;
   toolLogger = deps.log;
 }
@@ -29,6 +42,58 @@ function json(payload: unknown) {
     details: payload,
   };
 }
+
+// ============================================================================
+// list_emails tool
+// ============================================================================
+
+export const listEmailsTool = {
+  name: "list_emails",
+  label: "List Recent Emails",
+  description:
+    "Fetch recent emails from the user's Microsoft 365 inbox. Use this when the user asks about their emails, new messages, or wants to check their inbox.",
+  parameters: Type.Object({
+    count: Type.Optional(
+      Type.Number({ description: "Number of emails to fetch (default 10, max 20)" }),
+    ),
+    unreadOnly: Type.Optional(
+      Type.Boolean({ description: "Only return unread emails (default true)" }),
+    ),
+  }),
+  async execute(_id: string, params: Record<string, unknown>) {
+    if (!mailReadAuth)
+      throw new Error("Email auth not available — unified-inbox service may not be running");
+    const count = Math.min(Math.max(Number(params.count) || 10, 1), 20);
+    const unreadOnly = params.unreadOnly !== false;
+
+    const token = await mailReadAuth.getAccessToken();
+    const result = await fetchMailDelta(token, "Inbox", {
+      filterUnread: unreadOnly,
+      top: count,
+    });
+
+    const emails = result.messages.map((msg) => ({
+      id: msg.id,
+      from: msg.from?.emailAddress?.name
+        ? `${msg.from.emailAddress.name} <${msg.from.emailAddress.address}>`
+        : (msg.from?.emailAddress?.address ?? "Unknown"),
+      subject: msg.subject ?? "(no subject)",
+      preview: (msg.bodyPreview ?? "").slice(0, 200),
+      time: msg.receivedDateTime,
+      isRead: msg.isRead,
+      hasAttachments: msg.hasAttachments,
+      importance: msg.importance,
+      to: (msg.toRecipients ?? []).map((r) =>
+        r.emailAddress?.name
+          ? `${r.emailAddress.name} <${r.emailAddress.address}>`
+          : (r.emailAddress?.address ?? ""),
+      ),
+    }));
+
+    toolLogger?.info(`unified-inbox: tool listed ${emails.length} emails`);
+    return json({ count: emails.length, emails });
+  },
+};
 
 // ============================================================================
 // send_email tool
@@ -45,7 +110,8 @@ export const sendEmailTool = {
     body: Type.String({ description: "Email body text" }),
   }),
   async execute(_id: string, params: Record<string, unknown>) {
-    if (!mailAuth) throw new Error("Email auth not available — unified-inbox service may not be running");
+    if (!mailAuth)
+      throw new Error("Email auth not available — unified-inbox service may not be running");
     const to = String(params.to ?? "").trim();
     const subject = String(params.subject ?? "").trim();
     const body = String(params.body ?? "").trim();
@@ -70,7 +136,9 @@ export const replyEmailTool = {
   description:
     "Reply to an existing email by its Graph message ID. The message ID is available from recent email notifications.",
   parameters: Type.Object({
-    messageId: Type.String({ description: "The Microsoft Graph message ID of the email to reply to" }),
+    messageId: Type.String({
+      description: "The Microsoft Graph message ID of the email to reply to",
+    }),
     body: Type.String({ description: "Reply body text" }),
   }),
   async execute(_id: string, params: Record<string, unknown>) {
@@ -109,7 +177,9 @@ export const listTeamsChatsTool = {
       lastMessage: c.lastMessagePreview
         ? {
             from: c.lastMessagePreview.from?.user?.displayName ?? "Unknown",
-            preview: (c.lastMessagePreview.body?.content ?? "").replace(/<[^>]+>/g, "").slice(0, 120),
+            preview: (c.lastMessagePreview.body?.content ?? "")
+              .replace(/<[^>]+>/g, "")
+              .slice(0, 120),
             time: c.lastMessagePreview.createdDateTime,
           }
         : null,

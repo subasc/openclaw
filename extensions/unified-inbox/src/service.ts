@@ -3,12 +3,13 @@
 // Manages all monitors, token refresh, and graceful shutdown
 // ============================================================================
 
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { homedir } from "node:os";
 import type { OpenClawPluginService, OpenClawPluginServiceContext } from "openclaw/plugin-sdk";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import type { UnifiedInboxConfig } from "./config.js";
 import type { IMsAuthProvider } from "./types.js";
+import type { ButtonContext } from "./types.js";
 import { setToolAuthProviders } from "./agent-tools.js";
 import { BrowserTokenAuth } from "./browser-token-auth.js";
 import { CalendarMonitor } from "./calendar-monitor.js";
@@ -18,9 +19,8 @@ import { ShortIdRegistry, EmailReplyFlow } from "./email-reply-flow.js";
 import { getMe } from "./ms-graph-client.js";
 import { setReplyRouterDependencies } from "./reply-router.js";
 import { ReplyStore } from "./reply-store.js";
-import { TeamsChatMonitor } from "./teams-chat-monitor.js";
-import type { ButtonContext } from "./types.js";
 import { SubBotRegistry, createMonitorSubBot, createWhatsAppSubBot } from "./sub-bot-registry.js";
+import { TeamsChatMonitor } from "./teams-chat-monitor.js";
 import { setCommandDependencies } from "./telegram-commands.js";
 import { sendTelegramMessage } from "./telegram-sender.js";
 import { setWhatsAppBridgeReplyStore, setWhatsAppBridgeButtonRegistry } from "./whatsapp-bridge.js";
@@ -183,10 +183,12 @@ export function createUnifiedInboxService(
       const mailAuth = hasTeamsTokens && teamsAuth ? teamsAuth : auth;
       const chatAuth = hasOutlookTokens ? auth : teamsAuth;
 
-      // Wire agent tools — use Outlook REST token for sending (has Mail.Send scope)
+      // Wire agent tools — use Outlook REST token for sending (has Mail.Send scope),
+      // and Graph token for reading (has Mail.Read scope)
       const mailSendAuth = hasOutlookRestTokens && outlookRestAuth ? outlookRestAuth : mailAuth;
       setToolAuthProviders({
         mailAuth: mailSendAuth,
+        mailReadAuth: mailAuth,
         chatAuth: chatAuth!,
         log,
       });
@@ -247,33 +249,39 @@ export function createUnifiedInboxService(
       registry = new SubBotRegistry(log);
 
       if (emailMonitor) {
-        registry.register(createMonitorSubBot({
-          id: "email",
-          name: "Email Monitor",
-          description: "Polls Microsoft Graph for new emails and forwards to Telegram",
-          type: "email",
-          monitor: emailMonitor,
-        }));
+        registry.register(
+          createMonitorSubBot({
+            id: "email",
+            name: "Email Monitor",
+            description: "Polls Microsoft Graph for new emails and forwards to Telegram",
+            type: "email",
+            monitor: emailMonitor,
+          }),
+        );
       }
 
       if (calendarMonitor) {
-        registry.register(createMonitorSubBot({
-          id: "calendar",
-          name: "Calendar Monitor",
-          description: "Polls Microsoft Graph for upcoming events and sends reminders",
-          type: "calendar",
-          monitor: calendarMonitor,
-        }));
+        registry.register(
+          createMonitorSubBot({
+            id: "calendar",
+            name: "Calendar Monitor",
+            description: "Polls Microsoft Graph for upcoming events and sends reminders",
+            type: "calendar",
+            monitor: calendarMonitor,
+          }),
+        );
       }
 
       if (teamsChatMonitor) {
-        registry.register(createMonitorSubBot({
-          id: "teams-chat",
-          name: "Teams Chat Monitor",
-          description: "Polls Microsoft Graph for new Teams chat messages",
-          type: "teams-chat",
-          monitor: teamsChatMonitor,
-        }));
+        registry.register(
+          createMonitorSubBot({
+            id: "teams-chat",
+            name: "Teams Chat Monitor",
+            description: "Polls Microsoft Graph for new Teams chat messages",
+            type: "teams-chat",
+            monitor: teamsChatMonitor,
+          }),
+        );
       }
 
       if (cfg.whatsapp.enabled) {
@@ -296,7 +304,10 @@ export function createUnifiedInboxService(
       const wireUnpause = (
         authProvider: IMsAuthProvider,
         authName: string,
-        monitors: Array<{ name: string; monitor: EmailMonitor | CalendarMonitor | TeamsChatMonitor | null }>,
+        monitors: Array<{
+          name: string;
+          monitor: EmailMonitor | CalendarMonitor | TeamsChatMonitor | null;
+        }>,
       ) => {
         if (typeof authProvider.setOnTokenRecovered !== "function") return;
         authProvider.setOnTokenRecovered(() => {
@@ -309,7 +320,9 @@ export function createUnifiedInboxService(
             }
           }
           if (unpaused.length > 0) {
-            log.info(`unified-inbox: ${authName} token recovered — unpaused: ${unpaused.join(", ")}`);
+            log.info(
+              `unified-inbox: ${authName} token recovered — unpaused: ${unpaused.join(", ")}`,
+            );
             sendTelegramMessage({
               botToken: cfg.telegramBotToken,
               chatId: cfg.telegramChatId,
@@ -327,9 +340,7 @@ export function createUnifiedInboxService(
 
       // chatAuth (Outlook token) serves Teams Chat monitor
       if (chatAuth) {
-        wireUnpause(chatAuth, "Teams Chat", [
-          { name: "Teams Chat", monitor: teamsChatMonitor },
-        ]);
+        wireUnpause(chatAuth, "Teams Chat", [{ name: "Teams Chat", monitor: teamsChatMonitor }]);
       }
 
       // 10. Notify startup with dashboard
@@ -339,11 +350,7 @@ export function createUnifiedInboxService(
         return `${bot.name}: ${state}`;
       });
 
-      const dashboardText = [
-        "[Unified Inbox] Started",
-        "",
-        ...statusLines,
-      ].join("\n");
+      const dashboardText = ["[Unified Inbox] Started", "", ...statusLines].join("\n");
 
       // Build inline buttons for each sub-bot (toggle start/stop)
       const botButtons = allBots.map((bot) => ({
@@ -357,7 +364,9 @@ export function createUnifiedInboxService(
         buttonRows.push(botButtons.slice(i, i + 2));
       }
 
-      log.info(`unified-inbox: monitors started (${allBots.map((b) => b.name).join(", ") || "none"})`);
+      log.info(
+        `unified-inbox: monitors started (${allBots.map((b) => b.name).join(", ") || "none"})`,
+      );
       await sendTelegramMessage({
         botToken: cfg.telegramBotToken,
         chatId: cfg.telegramChatId,
