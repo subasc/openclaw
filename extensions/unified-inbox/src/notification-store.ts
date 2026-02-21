@@ -4,6 +4,8 @@
 // them and prepends them as context so the AI can reference emails/events/chats.
 // ============================================================================
 
+import { persistToLongTermMemory } from "./memory-bridge.js";
+
 export type NotificationEntry = {
   source: "email" | "calendar" | "teams" | "whatsapp";
   text: string;
@@ -20,6 +22,8 @@ export function pushNotification(entry: NotificationEntry): void {
   if (entries.length > MAX_ENTRIES) {
     entries = entries.slice(-MAX_ENTRIES);
   }
+  // Fire-and-forget: persist to vector memory for long-term recall
+  persistToLongTermMemory(entry.text, entry.source).catch(() => {});
 }
 
 export function getRecentNotifications(): NotificationEntry[] {

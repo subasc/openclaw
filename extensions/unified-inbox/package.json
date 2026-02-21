@@ -4,7 +4,9 @@
   "description": "Unified Inbox: bridge Microsoft 365 email, calendar, Teams chat, and WhatsApp through Telegram",
   "type": "module",
   "dependencies": {
-    "@azure/msal-node": "^2.16.2"
+    "@azure/msal-node": "^2.16.2",
+    "@lancedb/lancedb": "^0.26.2",
+    "openai": "^6.22.0"
   },
   "devDependencies": {
     "openclaw": "workspace:*"
