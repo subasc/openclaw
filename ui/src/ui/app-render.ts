@@ -40,6 +40,7 @@ import {
   updateExecApprovalsFormValue,
 } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
+import { loadMissionControl } from "./controllers/mission-control.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
 import { deleteSession, loadSessions, patchSession } from "./controllers/sessions.ts";
@@ -62,6 +63,7 @@ import { renderExecApprovalPrompt } from "./views/exec-approval.ts";
 import { renderGatewayUrlConfirmation } from "./views/gateway-url-confirmation.ts";
 import { renderInstances } from "./views/instances.ts";
 import { renderLogs } from "./views/logs.ts";
+import { renderMissionControl } from "./views/mission-control.ts";
 import { renderNodes } from "./views/nodes.ts";
 import { renderOverview } from "./views/overview.ts";
 import { renderSessions } from "./views/sessions.ts";
@@ -225,6 +227,30 @@ export function renderApp(state: AppViewState) {
                 },
                 onConnect: () => state.connect(),
                 onRefresh: () => state.loadOverview(),
+              })
+            : nothing
+        }
+
+        ${
+          state.tab === "mission-control"
+            ? renderMissionControl({
+                loading: state.missionControlLoading,
+                error: state.missionControlError,
+                snapshot: state.missionControlSnapshot,
+                bridges: state.missionControlBridges,
+                costSummary: state.missionControlCostSummary,
+                lastRefresh: state.missionControlLastRefresh,
+                taskDraft: state.missionControlTaskDraft,
+                onRefresh: () => loadMissionControl(state),
+                onTaskDraftChange: (value) => (state.missionControlTaskDraft = value),
+                onCreateTask: () => {
+                  const title = state.missionControlTaskDraft.trim();
+                  if (!title) {
+                    return;
+                  }
+                  void state.handleSendChat(`create a task: ${title}`);
+                  state.missionControlTaskDraft = "";
+                },
               })
             : nothing
         }

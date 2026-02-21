@@ -53,6 +53,29 @@ const plugin = {
     const serviceHandle = createUnifiedInboxService(cfg, api.logger);
     api.registerService(serviceHandle.service);
 
+    // Expose sub-bot status for Mission Control dashboard
+    api.registerGatewayMethod("unified-inbox.status", ({ respond }) => {
+      const registry = serviceHandle.getRegistry();
+      if (!registry) {
+        respond(true, { bots: [] });
+        return;
+      }
+      const bots = registry.getAll().map((bot) => ({
+        id: bot.id,
+        name: bot.name,
+        type: bot.type,
+        status: {
+          running: bot.status.running,
+          paused: bot.status.paused,
+          lastPollAt: bot.status.lastPollAt,
+          lastErrorAt: bot.status.lastErrorAt,
+          lastError: bot.status.lastError,
+          consecutiveFailures: bot.status.consecutiveFailures,
+        },
+      }));
+      respond(true, { bots });
+    });
+
     // Register reply router hook (intercepts Telegram replies, routes back to source)
     const replyRouter = createReplyRouter(cfg, api.logger);
     api.on("message_received", replyRouter.handleMessageReceived);

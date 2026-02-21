@@ -16,16 +16,18 @@ import type {
   ChannelsStatusSnapshot,
   ConfigSnapshot,
   ConfigUiHints,
+  CostUsageSummary,
   CronJob,
   CronRunLogEntry,
   CronStatus,
   HealthSnapshot,
   LogEntry,
   LogLevel,
+  MissionControlBridge,
+  MissionControlSnapshot,
   NostrProfile,
   PresenceEntry,
   SessionsUsageResult,
-  CostUsageSummary,
   SessionUsageTimeSeries,
   SessionsListResult,
   SkillStatusReport,
@@ -197,6 +199,14 @@ export type AppViewState = {
   skillEdits: Record<string, string>;
   skillMessages: Record<string, SkillMessage>;
   skillsBusyKey: string | null;
+  missionControlLoading: boolean;
+  missionControlError: string | null;
+  missionControlSnapshot: MissionControlSnapshot | null;
+  missionControlBridges: MissionControlBridge[] | null;
+  missionControlCostSummary: CostUsageSummary | null;
+  missionControlLastRefresh: number | null;
+  missionControlTaskDraft: string;
+  loadMissionControl: () => Promise<void>;
   debugLoading: boolean;
   debugStatus: StatusSummary | null;
   debugHealth: HealthSnapshot | null;

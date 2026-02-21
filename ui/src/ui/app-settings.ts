@@ -6,6 +6,8 @@ import {
   stopLogsPolling,
   startDebugPolling,
   stopDebugPolling,
+  startMissionControlPolling,
+  stopMissionControlPolling,
 } from "./app-polling.ts";
 import { scheduleChatScroll, scheduleLogsScroll } from "./app-scroll.ts";
 import { loadAgentIdentities, loadAgentIdentity } from "./controllers/agent-identity.ts";
@@ -18,6 +20,7 @@ import { loadDebug } from "./controllers/debug.ts";
 import { loadDevices } from "./controllers/devices.ts";
 import { loadExecApprovals } from "./controllers/exec-approvals.ts";
 import { loadLogs } from "./controllers/logs.ts";
+import { loadMissionControl } from "./controllers/mission-control.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 import { loadPresence } from "./controllers/presence.ts";
 import { loadSessions } from "./controllers/sessions.ts";
@@ -160,6 +163,11 @@ export function setTab(host: SettingsHost, next: Tab) {
   } else {
     stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
   }
+  if (next === "mission-control") {
+    startMissionControlPolling(host as unknown as Parameters<typeof startMissionControlPolling>[0]);
+  } else {
+    stopMissionControlPolling(host as unknown as Parameters<typeof stopMissionControlPolling>[0]);
+  }
   void refreshActiveTab(host);
   syncUrlWithTab(host, next, false);
 }
@@ -181,6 +189,9 @@ export function setTheme(host: SettingsHost, next: ThemeMode, context?: ThemeTra
 export async function refreshActiveTab(host: SettingsHost) {
   if (host.tab === "overview") {
     await loadOverview(host);
+  }
+  if (host.tab === "mission-control") {
+    await loadMissionControl(host as unknown as OpenClawApp);
   }
   if (host.tab === "channels") {
     await loadChannelsTab(host);
@@ -359,6 +370,11 @@ export function setTabFromRoute(host: SettingsHost, next: Tab) {
   } else {
     stopDebugPolling(host as unknown as Parameters<typeof stopDebugPolling>[0]);
   }
+  if (next === "mission-control") {
+    startMissionControlPolling(host as unknown as Parameters<typeof startMissionControlPolling>[0]);
+  } else {
+    stopMissionControlPolling(host as unknown as Parameters<typeof stopMissionControlPolling>[0]);
+  }
   if (host.connected) {
     void refreshActiveTab(host);
   }
@@ -419,6 +435,8 @@ export async function loadChannelsTab(host: SettingsHost) {
     loadConfig(host as unknown as OpenClawApp),
   ]);
 }
+
+export { loadMissionControl };
 
 export async function loadCron(host: SettingsHost) {
   await Promise.all([

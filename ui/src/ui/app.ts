@@ -21,6 +21,8 @@ import type {
   HealthSnapshot,
   LogEntry,
   LogLevel,
+  MissionControlBridge,
+  MissionControlSnapshot,
   PresenceEntry,
   ChannelsStatusSnapshot,
   SessionsListResult,
@@ -66,6 +68,7 @@ import {
 import {
   applySettings as applySettingsInternal,
   loadCron as loadCronInternal,
+  loadMissionControl as loadMissionControlInternal,
   loadOverview as loadOverviewInternal,
   setTab as setTabInternal,
   setTheme as setThemeInternal,
@@ -298,6 +301,15 @@ export class OpenClawApp extends LitElement {
   @state() skillsBusyKey: string | null = null;
   @state() skillMessages: Record<string, SkillMessage> = {};
 
+  @state() missionControlLoading = false;
+  @state() missionControlError: string | null = null;
+  @state() missionControlSnapshot: MissionControlSnapshot | null = null;
+  @state() missionControlBridges: MissionControlBridge[] | null = null;
+  @state() missionControlCostSummary: import("./types.js").CostUsageSummary | null = null;
+  @state() missionControlLastRefresh: number | null = null;
+  @state() missionControlTaskDraft = "";
+  private missionControlPollInterval: number | null = null;
+
   @state() debugLoading = false;
   @state() debugStatus: StatusSummary | null = null;
   @state() debugHealth: HealthSnapshot | null = null;
@@ -427,6 +439,12 @@ export class OpenClawApp extends LitElement {
 
   async loadCron() {
     await loadCronInternal(this as unknown as Parameters<typeof loadCronInternal>[0]);
+  }
+
+  async loadMissionControl() {
+    await loadMissionControlInternal(
+      this as unknown as Parameters<typeof loadMissionControlInternal>[0],
+    );
   }
 
   async handleAbortChat() {

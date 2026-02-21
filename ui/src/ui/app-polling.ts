@@ -1,12 +1,14 @@
 import type { OpenClawApp } from "./app.ts";
 import { loadDebug } from "./controllers/debug.ts";
 import { loadLogs } from "./controllers/logs.ts";
+import { loadMissionControl } from "./controllers/mission-control.ts";
 import { loadNodes } from "./controllers/nodes.ts";
 
 type PollingHost = {
   nodesPollInterval: number | null;
   logsPollInterval: number | null;
   debugPollInterval: number | null;
+  missionControlPollInterval: number | null;
   tab: string;
 };
 
@@ -66,4 +68,24 @@ export function stopDebugPolling(host: PollingHost) {
   }
   clearInterval(host.debugPollInterval);
   host.debugPollInterval = null;
+}
+
+export function startMissionControlPolling(host: PollingHost) {
+  if (host.missionControlPollInterval != null) {
+    return;
+  }
+  host.missionControlPollInterval = window.setInterval(() => {
+    if (host.tab !== "mission-control") {
+      return;
+    }
+    void loadMissionControl(host as unknown as OpenClawApp);
+  }, 5000);
+}
+
+export function stopMissionControlPolling(host: PollingHost) {
+  if (host.missionControlPollInterval == null) {
+    return;
+  }
+  clearInterval(host.missionControlPollInterval);
+  host.missionControlPollInterval = null;
 }

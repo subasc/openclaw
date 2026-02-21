@@ -555,6 +555,55 @@ export type StatusSummary = Record<string, unknown>;
 
 export type HealthSnapshot = Record<string, unknown>;
 
+export type MissionControlSystemMetrics = {
+  cpuUsagePercent: number;
+  cpuCores: number;
+  memTotalBytes: number;
+  memFreeBytes: number;
+  memUsedPercent: number;
+  processMemMB: number;
+  uptimeMs: number | null;
+  platform: string;
+  nodeVersion: string;
+};
+
+export type MissionControlMemoryStats = {
+  available: boolean;
+  dbPath: string | null;
+  dbSizeBytes: number | null;
+};
+
+export type MissionControlBridge = {
+  id: string;
+  name: string;
+  type: string;
+  status: {
+    running: boolean;
+    paused: boolean;
+    lastPollAt: number | null;
+    lastErrorAt: number | null;
+    lastError: string | null;
+    consecutiveFailures: number;
+  };
+};
+
+export type MissionControlAgentModel = {
+  agentId: string;
+  name?: string;
+  isDefault: boolean;
+  model: string | null;
+  modelProvider?: string;
+  fallbacks?: string[];
+};
+
+export type MissionControlSnapshot = {
+  ts: number;
+  system: MissionControlSystemMetrics;
+  health: HealthSnapshot | null;
+  memory: MissionControlMemoryStats;
+  agentModels: MissionControlAgentModel[];
+};
+
 export type LogLevel = "trace" | "debug" | "info" | "warn" | "error" | "fatal";
 
 export type LogEntry = {
